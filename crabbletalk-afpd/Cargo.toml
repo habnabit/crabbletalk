@@ -3,13 +3,33 @@ name = "crabbletalk-afpd"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+
+[[bin]]
+name = "crabbletalk-afpd"
+path = "src/bin/afpd.rs"
+
+[[bin]]
+name = "crabbletalk-router"
+path = "src/bin/router.rs"
+
+[[bin]]
+name = "crabbletalk-qemu-client"
+path = "src/bin/qemu_client.rs"
 
 [dependencies]
 anyhow = "1.0.55"
+chrono = "0.4.19"
+pcap-file = "1.1.1"
 pnet = "0.29.0"
+tempfile = "3.3.0"
+
+[dependencies.tokio]
+version = "1"
+features = ["full"]
+
+[target."cfg(windows)".dependencies]
 winreg = "0.10.1"
 
-[dependencies.tokio] 
-version = "1"
-features = ["full"] 
+[target."cfg(unix)".dependencies]
+nix = "0.23.1"
