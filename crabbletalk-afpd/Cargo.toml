@@ -23,7 +23,12 @@ chrono = "0.4.19"
 getrandom = "0.2.5"
 pcap-file = "1.1.1"
 pnet = "0.29.0"
+structopt = "0.3.26"
 tempfile = "3.3.0"
+
+[dependencies.clap]
+version = "3.1.6"
+features = ["derive"]
 
 [dependencies.crabbletalk]
 path = ".."
