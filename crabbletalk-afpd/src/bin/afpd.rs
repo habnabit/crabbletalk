@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
-use pnet::packet::ethernet::EthernetPacket;
+use crabbletalk::link::decode_appletalk;
+use pnet::packet::Packet;
 
 fn pcap_path() -> PathBuf {
     let now = chrono::offset::Utc::now();
@@ -27,8 +28,9 @@ async fn main() -> Result<()> {
         }?;
         let now = chrono::offset::Utc::now();
         let data = &buf[..n_read];
-        let p = EthernetPacket::new(data);
-        println!("read {} bytes from {:?}: {:#?}", n_read, addr, p);
+        if let Some(p) = decode_appletalk(data) {
+            println!("read {} bytes: {:#?}\n  {:?}", n_read, p, p.payload());
+        }
         pcap_writer.write(
             now.timestamp() as u32,
             now.timestamp_subsec_nanos(),

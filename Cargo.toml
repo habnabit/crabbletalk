@@ -3,6 +3,9 @@ name = "crabbletalk"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
+pnet = "0.29.0"
+pnet_base = "0.29.0"
+pnet_macros = "0.29.0"
+pnet_macros_support = "0.29.0"
+pnet_packet = "0.29.0"

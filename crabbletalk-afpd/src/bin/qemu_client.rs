@@ -1,8 +1,15 @@
 use std::os::unix::net::UnixDatagram;
 use std::os::unix::prelude::IntoRawFd;
 use std::{ffi::CString, path::PathBuf};
+use pnet::util::MacAddr;
 
 use anyhow::{anyhow, Context, Result};
+
+fn new_mac() -> Result<MacAddr> {
+    let mut nic = [0u8; 3];
+    getrandom::getrandom(&mut nic[..])?;
+    Ok(MacAddr::new(0x52, 0x54, 0, nic[0], nic[1], nic[2]))
+}
 
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
@@ -29,16 +36,18 @@ fn main() -> Result<()> {
         "mac99",
         "-m",
         "512M",
-        "-hda",
-        "disk2.qcow2",
         "-device",
         "usb-kbd",
         "-device",
         "usb-tablet",
         "-nic",
     ];
-    let nic_arg = format!("tap,model=sungem,fd={}", sock_fd);
+    let mac = new_mac()?;
+    let nic_arg = format!("tap,model=sungem,fd={},mac={}", sock_fd, mac);
     base_argv.push(&nic_arg);
+    for arg in &args[2..] {
+        base_argv.push(arg);
+    }
     let argv: Vec<CString> = base_argv
         .into_iter()
         .map(|s| CString::new(s).map_err(|e| anyhow!("error allocating for {:?}", e)))
