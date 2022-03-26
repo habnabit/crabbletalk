@@ -11,8 +11,6 @@ struct Cli {
     #[clap(short, long)]
     pcap: Option<PathBuf>,
     socket_path: PathBuf,
-    #[clap(short = 'f', long)]
-    mkfifo: bool,
 }
 
 impl Cli {
@@ -21,32 +19,19 @@ impl Cli {
             Some(p) => p,
             None => return Ok(None),
         };
-        let f = if self.mkfifo {
-            nix::unistd::mkfifo(p, Self::fifo_mode())?;
-            std::fs::OpenOptions::new().write(true).open(p)?
-        } else {
-            File::create(p)?
-        };
+        let f = File::create(p)?;
+        println!("opened {:?}", f);
         Ok(Some(PcapWriter::new(f)?))
-    }
-
-    fn fifo_mode() -> Mode {
-        Mode::S_IRUSR
-            | Mode::S_IWUSR
-            | Mode::S_IRGRP
-            | Mode::S_IWGRP
-            | Mode::S_IROTH
-            | Mode::S_IWOTH
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let mut pcap_writer = cli.pcap_writer()?;
     let listener = tokio::net::UnixDatagram::bind(&cli.socket_path)?;
     let mut clients = BTreeSet::new();
     let mut buf = vec![0u8; 1600];
-    let mut pcap_writer = cli.pcap_writer()?;
 
     loop {
         let (n_read, addr) = tokio::select! {

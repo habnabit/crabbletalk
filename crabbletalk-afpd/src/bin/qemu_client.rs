@@ -39,7 +39,7 @@ fn main() -> Result<()> {
         "-device",
         "usb-kbd",
         "-device",
-        "usb-tablet",
+        "usb-mouse",
         "-nic",
     ];
     let mac = new_mac()?;
