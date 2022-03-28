@@ -20,8 +20,7 @@ async fn main() -> Result<()> {
             r = sock.recv_from(&mut buf) => { r }
         }?;
         let data = &buf[..n_read];
-        if let Some(p) = decode_appletalk(data) {
-            println!("read {} bytes: {:#?}\n  {:?}", n_read, p, p.payload());
+        if let Some(p) = decode_appletalk(data)? {
         }
     }
 

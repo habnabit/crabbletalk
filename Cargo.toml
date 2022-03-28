@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+packed_struct = "0.10.0"
+thiserror = "1.0.30"
 pnet = "0.29.0"
 pnet_base = "0.29.0"
 pnet_macros = "0.29.0"
