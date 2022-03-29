@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
-use crabbletalk::link::decode_appletalk;
 use pnet::packet::Packet;
 
 #[tokio::main]
@@ -13,6 +12,9 @@ async fn main() -> Result<()> {
     sock.connect(&router_path)?;
     sock.send(b"").await?;
     let mut buf = vec![0u8; 1600];
+    let mac = crabbletalk::addr::Mac::new_random();
+    println!("afpd starting up on {:?}", mac);
+    let (mut aarp_stack, atalk_rx) = crabbletalk::aarp::AarpStack::new(mac);
 
     loop {
         let (n_read, addr) = tokio::select! {
@@ -20,8 +22,7 @@ async fn main() -> Result<()> {
             r = sock.recv_from(&mut buf) => { r }
         }?;
         let data = &buf[..n_read];
-        if let Some(p) = decode_appletalk(data)? {
-        }
+        aarp_stack.process_ethernet(data).await?;
     }
 
     std::fs::remove_file(&sock_path).with_context(|| format!("whilst deleting {:?}", sock_path))?;

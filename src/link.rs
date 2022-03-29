@@ -1,9 +1,17 @@
 use packed_struct::prelude::*;
-use pnet_packet::ethernet::EtherTypes;
 
 use crate::addr::*;
-use crate::Result;
-use crate::UnpackSplit;
+use std::fmt;
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct AppletalkPacket(pub Vec<u8>);
+
+impl fmt::Debug for AppletalkPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AppletalkPacket<{}b>", self.0.len())
+    }
+}
 
 #[derive(PackedStruct, Debug, Clone)]
 #[packed_struct(endian = "msb", bit_numbering = "msb0")]
@@ -26,21 +34,4 @@ pub struct Elap {
     pub oui: u32,
     #[packed_field(element_size_bytes = "2")]
     pub ethertype: Ethertype,
-}
-
-pub fn decode_appletalk<'p>(data: &'p [u8]) -> Result<Option<()>> {
-    let (elap, payload) = crate::link::Elap::unpack_split(data)?;
-    if elap.length > 1600 || elap.dsap != SNAP || elap.ssap != SNAP {
-        return Ok(None);
-    }
-    if elap.ethertype == EtherTypes::Aarp {
-        let p = crate::aarp::Aarp::unpack_from_slice(payload);
-        println!("\n==aarp: {:#?} {:#?}", elap, p);
-    } else if elap.ethertype == EtherTypes::AppleTalk {
-        let (ddp, _payload) = crate::ddp::Ddp::unpack_split(payload)?;
-        println!("\n^-ddp: {:#?} {:#?}", elap, ddp);
-    } else {
-        return Ok(None);
-    }
-    Ok(None)
 }

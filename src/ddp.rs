@@ -1,4 +1,5 @@
 use packed_struct::prelude::*;
+use crate::{addr::*, };
 
 #[derive(PackedStruct, Debug, Clone)]
 #[packed_struct(endian = "msb", bit_numbering = "msb0")]
@@ -12,9 +13,21 @@ pub struct Ddp {
     pub checksum: u16,
     pub dest_net: u16,
     pub src_net: u16,
-    pub dest_node: u8,
-    pub src_node: u8,
+    #[packed_field(element_size_bytes = "1", ty = "enum")]
+    pub dest_node: AppletalkNode,
+    #[packed_field(element_size_bytes = "1", ty = "enum")]
+    pub src_node: AppletalkNode,
     pub dest_socket: u8,
     pub src_socket: u8,
     pub typ: u8,
+}
+
+impl Ddp {
+    pub fn source(&self) -> Appletalk {
+        Appletalk { net: self.src_net, node: self.src_node }   
+    }
+
+    pub fn destination(&self) -> Appletalk {
+        Appletalk { net: self.dest_net, node: self.dest_node }   
+    }
 }
