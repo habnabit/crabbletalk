@@ -1,5 +1,5 @@
+use crate::addr::*;
 use packed_struct::prelude::*;
-use crate::{addr::*, };
 
 #[derive(PackedStruct, Debug, Clone)]
 #[packed_struct(endian = "msb", bit_numbering = "msb0")]
@@ -24,10 +24,16 @@ pub struct Ddp {
 
 impl Ddp {
     pub fn source(&self) -> Appletalk {
-        Appletalk { net: self.src_net, node: self.src_node }   
+        Appletalk {
+            net: self.src_net,
+            node: self.src_node,
+        }
     }
 
     pub fn destination(&self) -> Appletalk {
-        Appletalk { net: self.dest_net, node: self.dest_node }   
+        Appletalk {
+            net: self.dest_net,
+            node: self.dest_node,
+        }
     }
 }

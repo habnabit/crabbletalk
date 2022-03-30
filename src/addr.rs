@@ -10,11 +10,17 @@ const fn unpack_u24(n: u32) -> [u8; 3] {
 }
 
 pub const APPLE_OUI: [u8; 3] = unpack_u24(0x08_00_07);
+pub const APPLETALK_OUI: [u8; 3] = unpack_u24(0x09_00_07);
 pub const LAA_OUI: [u8; 3] = unpack_u24(0x52_54_00);
 pub const BROADCAST_NIC: [u8; 3] = unpack_u24(0xff_ff_ff);
 pub const APPLETALK_BROADCAST: Mac = Mac {
-    oui: APPLE_OUI,
+    oui: APPLETALK_OUI,
     nic: BROADCAST_NIC,
+};
+pub const ZERO_OUI: [u8; 3] = unpack_u24(0);
+pub const ZERO_MAC: Mac = Mac {
+    oui: ZERO_OUI,
+    nic: ZERO_OUI,
 };
 
 #[derive(PackedStruct, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -40,10 +46,7 @@ impl Mac {
         use rand::Rng;
         let mut nic = [0u8; 3];
         OsRng.fill(&mut nic[..]);
-        Mac {
-            oui: LAA_OUI,
-            nic,
-        }
+        Mac { oui: LAA_OUI, nic }
     }
 }
 
@@ -169,5 +172,11 @@ impl fmt::Debug for Ethertype {
 impl PartialEq<pnet_packet::ethernet::EtherType> for Ethertype {
     fn eq(&self, other: &pnet_packet::ethernet::EtherType) -> bool {
         self.protocol == other.0
+    }
+}
+
+impl From<pnet_packet::ethernet::EtherType> for Ethertype {
+    fn from(other: pnet_packet::ethernet::EtherType) -> Self {
+        Self { protocol: other.0 }
     }
 }

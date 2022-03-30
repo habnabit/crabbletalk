@@ -11,6 +11,8 @@ use thiserror::Error;
 pub enum CrabbletalkError {
     #[error("packed_struct error")]
     PackingError(#[from] PackingError),
+    #[error("hangup")]
+    Hangup,
 }
 
 pub type Result<T> = std::result::Result<T, CrabbletalkError>;
