@@ -4,7 +4,8 @@ use crate::link::AppletalkPacket;
 use crate::{addr::*, Result, UnpackSplit};
 use packed_struct::prelude::*;
 use pnet_packet::ethernet::EtherTypes;
-use tokio::sync::{mpsc, OnceCell};
+use tokio::sync::{mpsc, OnceCell, watch};
+use tokio::task;
 
 #[derive(PrimitiveEnum_u16, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AarpHardware {
@@ -47,14 +48,18 @@ pub struct Aarp {
 #[derive(Debug)]
 enum AddressPhase {
     Uninitialized,
-    Tentative(tokio::sync::Notify),
+    Tentative { 
+        addr: Appletalk,
+        conflict: std::sync::Arc<tokio::sync::Notify>,
+    },
     Accepted,
 }
 
 pub struct AarpStack {
-    frame_tx: mpsc::Sender<AppletalkPacket>,
+    appletalk_tx: mpsc::Sender<AppletalkPacket>,
     my_addr_ethernet: Mac,
-    my_addr_appletalk: OnceCell<Appletalk>,
+    my_addr_appletalk_tx: watch::Sender<Option<Appletalk>>,
+    my_addr_appletalk_rx: watch::Receiver<Option<Appletalk>>,
     phase: AddressPhase,
     amt_hw2atalk: retainer::Cache<Mac, Appletalk>,
     amt_atalk2hw: retainer::Cache<Appletalk, Mac>,
@@ -64,7 +69,6 @@ impl fmt::Debug for AarpStack {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AarpStack")
             .field("my_addr_ethernet", &self.my_addr_ethernet)
-            .field("my_addr_appletalk", &self.my_addr_appletalk)
             .field("phase", &self.phase)
             .field("amt_hw2atalk", &"<opaque>")
             .field("amt_atalk2hw", &"<opaque>")
@@ -74,36 +78,37 @@ impl fmt::Debug for AarpStack {
 
 impl AarpStack {
     pub fn new(hw: Mac) -> (Self, mpsc::Receiver<AppletalkPacket>) {
-        let (frame_tx, rx) = mpsc::channel(25);
+        let (appletalk_tx, appletalk_rx) = mpsc::channel(25);
+        let (my_addr_appletalk_tx, my_addr_appletalk_rx) = watch::channel(None);
         let ret = AarpStack {
-            frame_tx,
+            appletalk_tx,
             my_addr_ethernet: hw,
-            my_addr_appletalk: OnceCell::new(),
+            my_addr_appletalk_tx,
+            my_addr_appletalk_rx,
             phase: AddressPhase::Uninitialized,
             amt_hw2atalk: <retainer::Cache<_, _> as Default>::default().with_label("amt_hw2atalk"),
             amt_atalk2hw: <retainer::Cache<_, _> as Default>::default().with_label("amt_atalk2hw"),
         };
-        (ret, rx)
+        (ret, appletalk_rx)
     }
 
     pub async fn process_aarp(&mut self, data: &[u8]) -> Result<()> {
         let aarp = Aarp::unpack_from_slice(data)?;
         println!("  aarp: {:#?}", aarp);
         let my_hw = &self.my_addr_ethernet;
-        let my_atalk = self.my_addr_appletalk.get();
+        let my_atalk = self.my_addr_appletalk_rx.borrow();
         // let aarp_relevant = match my_hw {
         //     Some(addr) if &aarp.destination_hw == addr => true,
         //     _ if aarp.destination_hw == APPLETALK_BROADCAST => true,
         //     _ => false,
         // };
         use self::AarpFunction::*;
-        match (my_atalk, aarp.function, &self.phase) {
-            (Some(atalk), Probe, AddressPhase::Tentative(n))
-                if atalk == &aarp.destination_appletalk =>
+        match (&*my_atalk, aarp.function, &self.phase) {
+            (_, Probe, AddressPhase::Tentative { addr, conflict })
+                if addr == &aarp.destination_appletalk =>
             {
                 println!("tentative conflict");
-                n.notify_waiters();
-                self.phase = AddressPhase::Uninitialized;
+                conflict.notify_waiters();
             }
             (Some(atalk), Request | Probe, AddressPhase::Accepted)
                 if atalk == &aarp.destination_appletalk =>
@@ -149,5 +154,49 @@ impl AarpStack {
             );
         }
         Ok(())
+    }
+
+    async fn drive_phase(&mut self) {
+        use self::AddressPhase::*;
+        if matches!(self.phase, Uninitialized) {
+            let addr = Appletalk::new_random();
+            let notifier = std::sync::Arc::new(tokio::sync::Notify::new());
+            self.phase = Tentative { addr, conflict: notifier.clone() };
+            tokio::select! {
+                () = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                    // we won!!
+                    println!("haha we won");
+                }
+                () = notifier.notified() => {
+                    // conflict; try again
+                    println!("conflict");
+                    self.phase = Uninitialized;
+                    return;
+                }
+            }
+            self.phase = Accepted;
+            self.my_addr_appletalk_tx.send_replace(Some(addr));
+        }
+    }
+
+    pub async fn spawn(mut self, buffer_rx: watch::Receiver<Vec<u8>>) {
+        loop {
+            self.drive_phase().await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+}
+
+pub struct AarpStackHandle {
+    handle: task::JoinHandle<()>,
+    buffer_tx: watch::Sender<Vec<u8>>,
+}
+
+impl AarpStackHandle {
+    pub fn spawn(hw: Mac) -> (Self, mpsc::Receiver<AppletalkPacket>) {
+        let (stack, appletalk_rx) = AarpStack::new(hw);
+        let (buffer_tx, buffer_rx) = watch::channel(vec![]);
+        let handle = task::spawn(stack.spawn(buffer_rx));
+        (Self { handle, buffer_tx }, appletalk_rx)
     }
 }
