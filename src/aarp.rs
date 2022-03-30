@@ -70,7 +70,7 @@ impl AddressPhase {
                 .await
                 .map_err(|_| crate::CrabbletalkError::Hangup)?;
             tokio::select! {
-                () = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                () = tokio::time::sleep(std::time::Duration::from_millis(1500)) => {
                     // we won!!
                     println!("haha we won");
                 }
@@ -134,7 +134,13 @@ impl AarpStack {
             (Probe, AddressPhase::Tentative { addr, conflict })
                 if addr == &aarp.destination_appletalk =>
             {
-                println!("tentative conflict");
+                println!("tentative conflict 1");
+                conflict.notify_waiters();
+            }
+            (Response, AddressPhase::Tentative { addr, conflict })
+                if addr == &aarp.source_appletalk =>
+            {
+                println!("tentative conflict 2");
                 conflict.notify_waiters();
             }
             (Request | Probe, AddressPhase::Accepted { addr })
@@ -183,12 +189,21 @@ impl AarpStack {
         Ok(())
     }
 
+    async fn write_aarp(&self, mut payload: (Elap, Aarp)) -> Result<()> {
+        payload.0.length =
+            <(Elap, Aarp) as PackedStructSlice>::packed_bytes_size(Some(&payload))? as u16 - 14;
+        self.appletalk_tx
+            .send(AppletalkPacket(payload.pack_to_vec()?))
+            .await
+            .map_err(|_| crate::CrabbletalkError::Hangup)
+    }
+
     async fn maybe_probe_phase(&self) -> Result<()> {
         let addr = match &self.phase {
             &AddressPhase::Tentative { addr, .. } => addr,
             _ => return Ok(()),
         };
-        let mut payload = (
+        self.write_aarp((
             Elap {
                 destination: APPLETALK_BROADCAST,
                 source: self.my_addr_ethernet,
@@ -214,14 +229,8 @@ impl AarpStack {
                 _pad2: Default::default(),
                 destination_appletalk: addr,
             },
-        );
-        payload.0.length =
-            <(Elap, Aarp) as PackedStructSlice>::packed_bytes_size(Some(&payload))? as u16 - 14;
-        self.appletalk_tx
-            .send(AppletalkPacket(payload.pack_to_vec()?))
-            .await
-            .map_err(|_| crate::CrabbletalkError::Hangup)?;
-        Ok(())
+        ))
+        .await
     }
 
     pub async fn spawn(mut self, mut buffer_rx: mpsc::Receiver<Vec<u8>>) {
@@ -258,7 +267,12 @@ impl AarpStack {
                     println!("did some ethernet: {:?}", res);
                 }
                 () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-
+                    match self.maybe_probe_phase().await {
+                        Ok(()) => {}
+                        Err(e) => {
+                            println!("sent another probe? {:?}", e);
+                        }
+                    }
                 }
             }
         }

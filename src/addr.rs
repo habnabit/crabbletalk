@@ -122,6 +122,7 @@ pub struct Appletalk {
 
 impl Appletalk {
     pub fn new_random() -> Self {
+        //return Appletalk { net: 0xff00, node: AppletalkNode::Node(0x80) };
         use rand::rngs::OsRng;
         use rand::Rng;
         let net = OsRng.gen_range(APPLETALK_STARTUP_NET_RANGE);
