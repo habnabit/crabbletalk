@@ -1,7 +1,6 @@
-use std::os::unix::net::UnixDatagram;
+use pnet::util::MacAddr;
 use std::os::unix::prelude::IntoRawFd;
 use std::{ffi::CString, path::PathBuf};
-use pnet::util::MacAddr;
 
 use anyhow::{anyhow, Context, Result};
 
@@ -15,13 +14,7 @@ fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
     let server_path: PathBuf = args[1].parse()?;
 
-    let client_dir = tempfile::Builder::new()
-        .prefix(&format!("crabbletalk_{}", std::process::id()))
-        .tempdir()
-        .context("whilst making a tempdir")?;
-    let client_sock = client_dir.path().join("id.sock");
-    let sock = UnixDatagram::bind(&client_sock)
-        .with_context(|| format!("whilst binding to {:?}", client_sock))?;
+    let (sock, _unlinker) = crabbletalk_afpd::anonymous_datagram_client("crabbletalk_qemu_client")?;
     sock.connect(&server_path)
         .with_context(|| format!("whilst connecting to {:?}", server_path))?;
     let sock_fd = sock.into_raw_fd();

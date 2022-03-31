@@ -27,9 +27,11 @@ impl Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    //console_subscriber::init();
     let cli = Cli::parse();
     let mut pcap_writer = cli.pcap_writer()?;
     let listener = tokio::net::UnixDatagram::bind(&cli.socket_path)?;
+    let _unlinker = crabbletalk_afpd::UnlinkOnDrop::new(cli.socket_path);
     let mut clients = BTreeSet::new();
     let mut buf = vec![0u8; 1600];
 
@@ -38,6 +40,9 @@ async fn main() -> Result<()> {
             _ = tokio::signal::ctrl_c() => { break }
             r = listener.recv_from(&mut buf) => { r }
         }?;
+        if n_read < 1 {
+            continue;
+        }
         let data = &buf[..n_read];
         println!("read {} bytes from {:?}", n_read, addr);
         if let Some(writer) = &mut pcap_writer {
@@ -71,9 +76,6 @@ async fn main() -> Result<()> {
             }
         }
     }
-
-    std::fs::remove_file(&cli.socket_path)
-        .with_context(|| format!("whilst deleting {:?}", &cli.socket_path))?;
 
     Ok(())
 }

@@ -17,8 +17,10 @@ pub struct Ddp {
     pub dest_node: AppletalkNode,
     #[packed_field(element_size_bytes = "1", ty = "enum")]
     pub src_node: AppletalkNode,
-    pub dest_socket: u8,
-    pub src_socket: u8,
+    #[packed_field(element_size_bytes = "1", ty = "enum")]
+    pub dest_socket: AppletalkSocket,
+    #[packed_field(element_size_bytes = "1", ty = "enum")]
+    pub src_socket: AppletalkSocket,
     pub typ: u8,
 }
 

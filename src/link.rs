@@ -30,8 +30,7 @@ pub struct Elap {
     #[packed_field(element_size_bits = "1")]
     pub cr: bool,
     pub control: u8,
-    #[packed_field(element_size_bytes = "3")]
-    pub oui: u32,
+    pub oui: [u8; 3],
     #[packed_field(element_size_bytes = "2")]
     pub ethertype: Ethertype,
 }

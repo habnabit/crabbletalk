@@ -1,5 +1,7 @@
+use std::error::Error;
 use std::fmt;
 
+use crate::ddp::Ddp;
 use crate::link::{AppletalkPacket, Elap};
 use crate::{addr::*, Result, UnpackSplit};
 use packed_struct::prelude::*;
@@ -18,6 +20,12 @@ pub enum AarpFunction {
     Request = 1,
     Response = 2,
     Probe = 3,
+}
+
+#[derive(PrimitiveEnum_u8, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AepFunction {
+    Request = 1,
+    Reply = 2,
 }
 
 #[derive(PackedStruct, Debug, Clone)]
@@ -162,6 +170,63 @@ impl AarpStack {
         Ok(())
     }
 
+    pub async fn process_ddp(&mut self, elap: &Elap, data: &[u8]) -> Result<()> {
+        let (ddp, payload) = crate::ddp::Ddp::unpack_split(data)?;
+        match self.phase {
+            AddressPhase::Accepted { addr, .. } => {
+                let src = ddp.source();
+                let dest = ddp.destination();
+                if dest == addr {
+                    println!("oh it's to me");
+                } else if dest == APPLETALK_BROADCAST {
+                    self.write_ddp(
+                        (
+                            Elap {
+                                destination: elap.source,
+                                source: self.my_addr_ethernet,
+                                length: 0,
+                                dsap: SNAP,
+                                ig: false,
+                                ssap: SNAP,
+                                cr: false,
+                                control: 3,
+                                oui: APPLE_OUI,
+                                ethertype: EtherTypes::AppleTalk.into(),
+                            },
+                            Ddp {
+                                _reserved: Default::default(),
+                                hop_count: 0,
+                                length: 0,
+                                checksum: 0,
+                                dest_net: src.net,
+                                src_net: addr.net,
+                                dest_node: src.node,
+                                src_node: addr.node,
+                                dest_socket: AppletalkSocket::StaticSas(Sas::Aep),
+                                src_socket: AppletalkSocket::Dynamic(205),
+                                typ: 4,
+                            },
+                        ),
+                        b"1balls",
+                    )
+                    .await?;
+                } else {
+                }
+            }
+            _ => {}
+        }
+        println!(
+            "- ddp: {:?}#{:?} -> {:?}#{:?}; {}b (vs {}b)",
+            ddp.source(),
+            ddp.src_socket,
+            ddp.destination(),
+            ddp.dest_socket,
+            ddp.length,
+            payload.len()
+        );
+        Ok(())
+    }
+
     async fn add_addresses(&self, hw: Mac, atalk: Appletalk) {
         let expiry = || retainer::CacheExpiration::none();
         self.amt_hw2atalk.insert(hw, atalk, expiry()).await;
@@ -177,14 +242,7 @@ impl AarpStack {
             println!("\n==aarp elap: {:#?}", elap);
             self.process_aarp(payload).await?;
         } else if elap.ethertype == EtherTypes::AppleTalk {
-            let (ddp, payload) = crate::ddp::Ddp::unpack_split(payload)?;
-            println!(
-                "- ddp: {:?} -> {:?}; {}b (vs {}b)",
-                ddp.source(),
-                ddp.destination(),
-                ddp.length,
-                payload.len()
-            );
+            self.process_ddp(&elap, payload).await?;
         }
         Ok(())
     }
@@ -198,6 +256,21 @@ impl AarpStack {
             .map_err(|_| crate::CrabbletalkError::Hangup)
     }
 
+    async fn write_ddp(&self, mut header: (Elap, Ddp), payload: &[u8]) -> Result<()> {
+        header.0.length = (<(Elap, Ddp) as PackedStructSlice>::packed_bytes_size(Some(&header))?
+            - 14
+            + payload.len()) as u16;
+        header.1.length = (payload.len()
+            + <Ddp as PackedStructSlice>::packed_bytes_size(Some(&header.1))?)
+            as u16;
+        let mut payload_vec = header.pack_to_vec()?;
+        payload_vec.extend_from_slice(payload);
+        self.appletalk_tx
+            .send(AppletalkPacket(payload_vec))
+            .await
+            .map_err(|_| crate::CrabbletalkError::Hangup)
+    }
+
     async fn maybe_probe_phase(&self) -> Result<()> {
         let addr = match &self.phase {
             &AddressPhase::Tentative { addr, .. } => addr,
@@ -205,7 +278,7 @@ impl AarpStack {
         };
         self.write_aarp((
             Elap {
-                destination: APPLETALK_BROADCAST,
+                destination: APPLETALK_BROADCAST_MAC,
                 source: self.my_addr_ethernet,
                 length: 0,
                 dsap: SNAP,
@@ -213,7 +286,7 @@ impl AarpStack {
                 ssap: SNAP,
                 cr: false,
                 control: 3,
-                oui: 0,
+                oui: ZERO_OUI,
                 ethertype: EtherTypes::Aarp.into(),
             },
             Aarp {

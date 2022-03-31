@@ -5,10 +5,11 @@ use pnet::packet::Packet;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    console_subscriber::init();
     let args: Vec<_> = std::env::args().collect();
-    let sock_path: PathBuf = args[1].parse()?;
-    let router_path: PathBuf = args[2].parse()?;
-    let sock = tokio::net::UnixDatagram::bind(&sock_path)?;
+    let router_path: PathBuf = args[1].parse()?;
+    let (sock, _unlinker) = crabbletalk_afpd::anonymous_datagram_client("crabbletalk_afpd")?;
+    let sock = tokio::net::UnixDatagram::from_std(sock)?;
     sock.connect(&router_path)?;
     sock.send(b"").await?;
     let mut buf = vec![0u8; 1600];
@@ -37,8 +38,6 @@ async fn main() -> Result<()> {
         let data = &buf[..n_read];
         aarp_stack.process_ethernet(data).await?;
     }
-
-    std::fs::remove_file(&sock_path).with_context(|| format!("whilst deleting {:?}", sock_path))?;
 
     Ok(())
 }

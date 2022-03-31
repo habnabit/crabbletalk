@@ -13,7 +13,7 @@ pub const APPLE_OUI: [u8; 3] = unpack_u24(0x08_00_07);
 pub const APPLETALK_OUI: [u8; 3] = unpack_u24(0x09_00_07);
 pub const LAA_OUI: [u8; 3] = unpack_u24(0x52_54_00);
 pub const BROADCAST_NIC: [u8; 3] = unpack_u24(0xff_ff_ff);
-pub const APPLETALK_BROADCAST: Mac = Mac {
+pub const APPLETALK_BROADCAST_MAC: Mac = Mac {
     oui: APPLETALK_OUI,
     nic: BROADCAST_NIC,
 };
@@ -107,6 +107,10 @@ impl PrimitiveEnum for AppletalkNode {
     }
 }
 
+pub const APPLETALK_BROADCAST: Appletalk = Appletalk {
+    net: 0,
+    node: AppletalkNode::Broadcast,
+};
 pub const APPLETALK_STARTUP_NET_RANGE: RangeInclusive<u16> = 0xFF00..=0xFFFE;
 pub const APPLETALK_USER_NODE_RANGE: RangeInclusive<u8> = 0x01..=0x7F;
 pub const APPLETALK_SERVER_NODE_RANGE: RangeInclusive<u8> = 0x80..=0xFE;
@@ -140,6 +144,78 @@ impl fmt::Debug for Appletalk {
             self.node.to_primitive(),
             self.node
         )
+    }
+}
+
+#[derive(PrimitiveEnum_u8, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AppletalkSocketPrim {
+    Reserved0 = 0,
+    SasNbp = 2,
+    SasAep = 4,
+    Reserved255 = 255,
+}
+
+pub type AppletalkSocketCatchall = EnumCatchAll<AppletalkSocketPrim>;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Sas {
+    Nbp,
+    Aep,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AppletalkSocket {
+    StaticSas(Sas),
+    Static(u8),
+    Dynamic(u8),
+    Reserved0,
+    Reserved255,
+}
+
+impl AppletalkSocket {
+    fn from_prim(val: AppletalkSocketCatchall) -> Self {
+        use self::AppletalkSocketPrim::*;
+        use self::EnumCatchAll::*;
+        match val {
+            Enum(Reserved0) => AppletalkSocket::Reserved0,
+            Enum(Reserved255) => AppletalkSocket::Reserved255,
+            Enum(SasNbp) => AppletalkSocket::StaticSas(Sas::Nbp),
+            Enum(SasAep) => AppletalkSocket::StaticSas(Sas::Aep),
+            CatchAll(e @ 0x7f..=0xfe) => AppletalkSocket::Dynamic(e),
+            CatchAll(e) => AppletalkSocket::Static(e),
+        }
+    }
+
+    fn to_prim(self) -> AppletalkSocketCatchall {
+        use self::AppletalkSocket::*;
+        use self::EnumCatchAll::*;
+        match self {
+            Reserved0 => Enum(AppletalkSocketPrim::Reserved0),
+            Reserved255 => Enum(AppletalkSocketPrim::Reserved255),
+            StaticSas(Sas::Nbp) => Enum(AppletalkSocketPrim::SasNbp),
+            StaticSas(Sas::Aep) => Enum(AppletalkSocketPrim::SasAep),
+            Static(e) | Dynamic(e) => CatchAll(e),
+        }
+    }
+}
+
+impl PrimitiveEnum for AppletalkSocket {
+    type Primitive = u8;
+
+    fn from_primitive(val: u8) -> Option<Self> {
+        AppletalkSocketCatchall::from_primitive(val).map(Self::from_prim)
+    }
+
+    fn to_primitive(&self) -> u8 {
+        self.to_prim().to_primitive()
+    }
+
+    fn from_str(s: &str) -> Option<Self> {
+        AppletalkSocketCatchall::from_str(s).map(Self::from_prim)
+    }
+
+    fn from_str_lower(s: &str) -> Option<Self> {
+        AppletalkSocketCatchall::from_str_lower(s).map(Self::from_prim)
     }
 }
 

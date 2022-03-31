@@ -1,31 +1,15 @@
 [package]
-name = "crabbletalk-afpd"
+name = "cruats_rt_c"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-
-[[bin]]
-name = "crabbletalk-afpd"
-path = "src/bin/afpd.rs"
-
-[[bin]]
-name = "crabbletalk-router"
-path = "src/bin/router.rs"
-
-[[bin]]
-name = "crabbletalk-qemu-client"
-path = "src/bin/qemu_client.rs"
-
-[[bin]]
-name = "cruatsd"
-path = "src/bin/cruatsd.rs"
-
-[[bin]]
-name = "ctkping"
-path = "src/bin/ctkping.rs"
+name = "cruats_rt_c"
+crate-type = ["cdylib"]
 
 [dependencies]
+errno = "*"
+libc = "*"
 anyhow = "1.0.55"
 chrono = "0.4.19"
 getrandom = "0.2.5"
@@ -34,10 +18,6 @@ pnet = "0.29.0"
 structopt = "0.3.26"
 tempfile = "3.3.0"
 console-subscriber = "*"
-
-[dependencies.sendfd]
-version = "0.4.1"
-features = ["tokio"]
 
 [dependencies.clap]
 version = "3.1.6"
@@ -58,3 +38,6 @@ winreg = "0.10.1"
 
 [target."cfg(unix)".dependencies]
 nix = "0.23.1"
+
+[build-dependencies]
+cbindgen = "0.21.0"
