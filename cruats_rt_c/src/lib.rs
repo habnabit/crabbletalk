@@ -7,10 +7,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use cruats::at::sockaddr_at;
-use libc::{c_int, c_void, size_t, socklen_t, ssize_t};
+pub use cruats::at::{sockaddr_at, at_addr};
+use libc::{c_int, c_void, size_t, ssize_t};
 use nix::sys::{socket::MsgFlags, uio::IoVec};
 use sendfd::RecvWithFd;
+use cruats::zerocopy::{AsBytes, FromBytes};
 
 const ADDRLEN: usize = std::mem::size_of::<sockaddr_at>();
 
@@ -19,12 +20,13 @@ fn open_cruats(bind: Option<sockaddr_at>) -> Result<(c_int, sockaddr_at)> {
         std::env::var("CRUATS_CONTROL").context("whilst finding the cruats control socket")?;
     let mut cruats_control = UnixStream::connect(&cruats_path)
         .context("whilst connecting to the cruats control socket")?;
-    let bind = bind.unwrap_or_default();
-    let bind_slice = unsafe { std::slice::from_raw_parts(&bind as *const _ as *const u8, ADDRLEN) };
-    cruats_control
-        .write_all(bind_slice)
-        .context("whilst issuing cruats control request")?;
     let mut buffer = [0u8; ADDRLEN];
+    if let Some(bind) = bind {
+        let _ = bind.write_to(&mut buffer[..]);
+    }
+    cruats_control
+        .write_all(&buffer[..])
+        .context("whilst issuing cruats control request")?;
     let mut fds = [-1; 2];
     let (n_read, n_fds) = cruats_control.recv_with_fd(&mut buffer, &mut fds)?;
     if n_read != ADDRLEN || n_fds != 1 {
@@ -35,7 +37,8 @@ fn open_cruats(bind: Option<sockaddr_at>) -> Result<(c_int, sockaddr_at)> {
             n_fds
         ));
     }
-    let addr_out = unsafe { std::ptr::read(&buffer[0] as *const _ as *const sockaddr_at) };
+    let addr_out = sockaddr_at::read_from(&buffer[..])
+        .ok_or_else(|| anyhow::anyhow!("couldn't unpack the sockaddr_at?"))?;
     Ok((fds[0], addr_out))
 }
 
@@ -79,15 +82,15 @@ pub extern "C" fn cruats_ddp_sendto(
     buf: *const c_void,
     len: size_t,
     flags: c_int,
-    addr: *const c_void,
-    addrlen: socklen_t,
+    addr: *const sockaddr_at,
+    addrlen: size_t,
 ) -> ssize_t {
     let data = if buf.is_null() {
         errno!(libc::EINVAL);
     } else {
         unsafe { std::slice::from_raw_parts(buf as *const u8, len) }
     };
-    let addr = if addr.is_null() {
+    let addr = if addr.is_null() || addrlen != ADDRLEN {
         errno!(libc::EINVAL);
     } else {
         unsafe { std::slice::from_raw_parts(addr as *const u8, addrlen as usize) }
@@ -121,8 +124,8 @@ pub extern "C" fn cruats_ddp_recvfrom(
     buf: *mut c_void,
     len: size_t,
     flags: c_int,
-    addr: *mut c_void,
-    addrlen: *mut socklen_t,
+    addr: *mut sockaddr_at,
+    addrlen: *mut size_t,
 ) -> ssize_t {
     println!(
         "*** hello from rust recvfrom: {} {} {} ***",

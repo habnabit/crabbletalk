@@ -2,7 +2,11 @@ use std::{collections::BTreeSet, fs::File, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use tokio::{net::{UnixStream, unix::SocketAddr, UnixDatagram}, io::{AsyncReadExt, AsyncWriteExt}};
+use cruats::zerocopy::{FromBytes, LayoutVerified, Unalign};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{unix::SocketAddr, UnixDatagram, UnixStream},
+};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -34,12 +38,12 @@ async fn main() -> Result<()> {
             joined = joinset.join_one(), if !joinset.is_empty() => {
                 println!("ok well we joined {:?}", joined);
             }
-            recvd = ethertalk.recv_from(&mut ethertalk_buf) => { 
+            recvd = ethertalk.recv_from(&mut ethertalk_buf) => {
                 let (n_read, addr) = recvd?;
                 let data = &ethertalk_buf[..n_read];
                 aarp_stack.process_ethernet(data).await?;
             }
-            accepted = cruats_control.accept() => { 
+            accepted = cruats_control.accept() => {
                 let (stream, addr) = accepted?;
                 joinset.spawn(drive_stream(stream, addr));
             }
@@ -67,14 +71,16 @@ async fn main() -> Result<()> {
 }
 
 async fn drive_stream(mut stream: UnixStream, addr: SocketAddr) -> Result<()> {
-    use sendfd::SendWithFd;
-    use std::os::unix::io::IntoRawFd;
     use cruats::at::sockaddr_at;
+    use sendfd::SendWithFd;
     use std::mem::size_of;
+    use std::os::unix::io::IntoRawFd;
     let cred = stream.peer_cred();
     println!("well who do we got here {:?} {:?}", addr, cred);
     let mut buffer = [0u8; 1600];
-    let n_read = stream.read_exact(&mut buffer[..size_of::<sockaddr_at>()]).await?;
+    let n_read = stream
+        .read_exact(&mut buffer[..size_of::<sockaddr_at>()])
+        .await?;
     let (mine, theirs) = UnixDatagram::pair()?;
     let theirs = theirs.into_std()?.into_raw_fd();
     println!("here's {} bytes: {:?}", n_read, &buffer[..n_read]);
@@ -86,10 +92,18 @@ async fn drive_stream(mut stream: UnixStream, addr: SocketAddr) -> Result<()> {
 
     loop {
         let n_read = mine.recv(&mut buffer[..]).await?;
-        let addr_in = unsafe {
-            std::ptr::read::<sockaddr_at>(&buffer[0] as *const u8 as *const _)
-        };
-        println!("from {:?} {:?}: {:?}", cred, addr_in, &buffer[..n_read]);
+        let (addr_in, payload) = LayoutVerified::<_, Unalign<sockaddr_at>>::new_unaligned_from_prefix(
+            &buffer[..n_read],
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "couldn't unpack the sockaddr_at? {}: {:?}",
+                n_read,
+                &buffer[..n_read]
+            )
+        })?;
+        let addr_in = addr_in.into_ref().get();
+        println!("from {:?} {:?}: {:?}", cred, addr_in, payload);
     }
     Ok(())
 }

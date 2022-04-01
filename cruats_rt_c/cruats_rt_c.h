@@ -7,13 +7,13 @@
 
 typedef struct cruats_at_addr {
   unsigned short s_net;
-  unsigned char s_node;
+  unsigned short s_node;
 } cruats_at_addr;
 
 typedef struct cruats_sockaddr_at {
-  unsigned char sat_len;
+  short sat_len;
   short sat_family;
-  unsigned char sat_port;
+  short sat_port;
   struct cruats_at_addr sat_addr;
   char sat_zero[8];
 } cruats_sockaddr_at;
@@ -26,12 +26,12 @@ ssize_t cruats_ddp_recvfrom(int socket,
                             void *buf,
                             size_t len,
                             int flags,
-                            void *addr,
-                            cruats_socklen_t *addrlen);
+                            struct cruats_sockaddr_at *addr,
+                            size_t *addrlen);
 
 ssize_t cruats_ddp_sendto(int socket,
                           const void *buf,
                           size_t len,
                           int flags,
-                          const void *addr,
-                          cruats_socklen_t addrlen);
+                          const struct cruats_sockaddr_at *addr,
+                          size_t addrlen);
