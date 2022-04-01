@@ -27,11 +27,11 @@ ssize_t cruats_ddp_recvfrom(int socket,
                             size_t len,
                             int flags,
                             void *addr,
-                            unsigned int *addrlen);
+                            cruats_socklen_t *addrlen);
 
 ssize_t cruats_ddp_sendto(int socket,
                           const void *buf,
                           size_t len,
                           int flags,
                           const void *addr,
-                          unsigned int addrlen);
+                          cruats_socklen_t addrlen);

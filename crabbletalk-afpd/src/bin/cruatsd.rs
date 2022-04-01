@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, fs::File, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use tokio::{net::{UnixStream, unix::SocketAddr, UnixDatagram}, io::AsyncReadExt};
+use tokio::{net::{UnixStream, unix::SocketAddr, UnixDatagram}, io::{AsyncReadExt, AsyncWriteExt}};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -71,18 +71,25 @@ async fn drive_stream(mut stream: UnixStream, addr: SocketAddr) -> Result<()> {
     use std::os::unix::io::IntoRawFd;
     use cruats::at::sockaddr_at;
     use std::mem::size_of;
-    println!("well who do we got here {:?} {:?}", addr, stream.peer_cred());
-    let mut buffer = [0u8; size_of::<sockaddr_at>()];
-    let n_read = stream.read_exact(&mut buffer).await?;
+    let cred = stream.peer_cred();
+    println!("well who do we got here {:?} {:?}", addr, cred);
+    let mut buffer = [0u8; 1600];
+    let n_read = stream.read_exact(&mut buffer[..size_of::<sockaddr_at>()]).await?;
     let (mine, theirs) = UnixDatagram::pair()?;
     let theirs = theirs.into_std()?.into_raw_fd();
-    println!("here's {} bytes: {:?}", n_read, buffer);
+    println!("here's {} bytes: {:?}", n_read, &buffer[..n_read]);
     stream.writable().await?;
-    let res = stream.send_with_fd(b"haha owned", &[theirs]);
+    let res = stream.send_with_fd(&buffer, &[theirs]);
     println!("1: {:?}", res);
-    let res = mine.send(b"balls").await;
-    println!("2: {:?}", res);
-    let res = mine.recv(&mut buffer).await;
-    println!("3 :{:?} {:?}", res, buffer);
+    stream.shutdown().await?;
+    drop(stream);
+
+    loop {
+        let n_read = mine.recv(&mut buffer[..]).await?;
+        let addr_in = unsafe {
+            std::ptr::read::<sockaddr_at>(&buffer[0] as *const u8 as *const _)
+        };
+        println!("from {:?} {:?}: {:?}", cred, addr_in, &buffer[..n_read]);
+    }
     Ok(())
 }
