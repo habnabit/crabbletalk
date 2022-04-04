@@ -1,13 +1,14 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::ddp::Ddp;
+use crate::ddp::{Ddp, DdpSocket};
 use crate::link::{AppletalkPacket, Elap};
 use crate::{addr::*, Result, UnpackSplit};
 use packed_struct::prelude::*;
 use pnet_packet::ethernet::EtherTypes;
-use tokio::sync::{mpsc, watch, OnceCell};
+use tokio::sync::{mpsc, oneshot, watch, OnceCell};
 use tokio::task;
+use tokio_stream::StreamExt;
 
 #[derive(PrimitiveEnum_u16, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AarpHardware {
@@ -179,37 +180,6 @@ impl AarpStack {
                 if dest == addr {
                     println!("oh it's to me");
                 } else if dest == APPLETALK_BROADCAST {
-                    self.write_ddp(
-                        (
-                            Elap {
-                                destination: elap.source,
-                                source: self.my_addr_ethernet,
-                                length: 0,
-                                dsap: SNAP,
-                                ig: false,
-                                ssap: SNAP,
-                                cr: false,
-                                control: 3,
-                                oui: APPLE_OUI,
-                                ethertype: EtherTypes::AppleTalk.into(),
-                            },
-                            Ddp {
-                                _reserved: Default::default(),
-                                hop_count: 0,
-                                length: 0,
-                                checksum: 0,
-                                dest_net: src.net,
-                                src_net: addr.net,
-                                dest_node: src.node,
-                                src_node: addr.node,
-                                dest_socket: AppletalkSocket::StaticSas(Sas::Aep),
-                                src_socket: AppletalkSocket::Dynamic(205),
-                                typ: 4,
-                            },
-                        ),
-                        b"1balls",
-                    )
-                    .await?;
                 } else {
                 }
             }
@@ -256,10 +226,22 @@ impl AarpStack {
             .map_err(|_| crate::CrabbletalkError::Hangup)
     }
 
-    async fn write_ddp(&self, mut header: (Elap, Ddp), payload: &[u8]) -> Result<()> {
+    async fn write_ddp(&self, mut header: (Elap, Ddp), mut payload: &[u8], take_payload_type: bool) -> Result<()> {
+        let addr = match &self.phase {
+            AddressPhase::Accepted { addr, .. } => addr,
+            _ => {
+                println!("erk");
+                return Ok(())
+            },
+        };
+        if take_payload_type {
+            header.1.typ = payload[0];
+            payload = &payload[1..];
+        }
         header.0.length = (<(Elap, Ddp) as PackedStructSlice>::packed_bytes_size(Some(&header))?
             - 14
             + payload.len()) as u16;
+        header.1.set_source(*addr);
         header.1.length = (payload.len()
             + <Ddp as PackedStructSlice>::packed_bytes_size(Some(&header.1))?)
             as u16;
@@ -306,11 +288,16 @@ impl AarpStack {
         .await
     }
 
-    pub async fn spawn(mut self, mut buffer_rx: mpsc::Receiver<Vec<u8>>) {
+    pub async fn spawn(
+        mut self,
+        mut buffer_rx: mpsc::Receiver<Vec<u8>>,
+        mut ddp_control_rx: mpsc::Receiver<DdpControl>,
+    ) {
         let (phase_tx, mut phase_rx) = mpsc::channel(1);
         let mut phase_fut = AddressPhase::acquire(phase_tx.clone());
         tokio::pin!(phase_fut);
         let mut drive_phase_fut = true;
+        let mut ddp_merge = tokio_stream::StreamMap::new();
         loop {
             tokio::select! {
                 res = &mut phase_fut, if drive_phase_fut => {
@@ -339,6 +326,49 @@ impl AarpStack {
                     let res = self.process_ethernet(&buf[..]).await;
                     println!("did some ethernet: {:?}", res);
                 }
+                next = ddp_control_rx.recv() => {
+                    let ctrl = match next {
+                        Some(x) => x,
+                        None => {
+                            println!("ddp control rx abort");
+                            return;
+                        },
+                    };
+                    let (ddp_tx_in, ddp_rx_in) = mpsc::channel::<(Ddp, Vec<u8>)>(1);
+                    let (ddp_tx_out, ddp_rx_out) = mpsc::channel::<(Ddp, Vec<u8>)>(1);
+                    ddp_merge.insert(ctrl.bind, tokio_stream::wrappers::ReceiverStream::new(ddp_rx_in));
+                    let ret = crate::ddp::DdpSocket { mine: ctrl.bind, ddp_tx: ddp_tx_in, ddp_rx: ddp_rx_out };
+                    let _ = ctrl.reply.send(ret);
+                }
+                next = ddp_merge.next(), if !ddp_merge.is_empty() => {
+                    let (socket, (ddp, payload)) = match next {
+                        Some(x) => x,
+                        None => {
+                            println!("ddp merge abort");
+                            return;
+                        },
+                    };
+                    let res = self.write_ddp(
+                        (
+                            Elap {
+                                destination: APPLETALK_BROADCAST_MAC,
+                                source: self.my_addr_ethernet,
+                                length: 0,
+                                dsap: SNAP,
+                                ig: false,
+                                ssap: SNAP,
+                                cr: false,
+                                control: 3,
+                                oui: APPLE_OUI,
+                                ethertype: EtherTypes::AppleTalk.into(),
+                            },
+                            ddp,
+                        ),
+                        &payload[..],
+                        true,
+                    )
+                    .await;
+                }
                 () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                     match self.maybe_probe_phase().await {
                         Ok(()) => {}
@@ -352,17 +382,30 @@ impl AarpStack {
     }
 }
 
+pub struct DdpControl {
+    bind: AppletalkSocket,
+    reply: oneshot::Sender<DdpSocket>,
+}
+
+#[derive(Debug, Clone)]
 pub struct AarpStackHandle {
-    handle: task::JoinHandle<()>,
     buffer_tx: mpsc::Sender<Vec<u8>>,
+    control_tx: mpsc::Sender<DdpControl>,
 }
 
 impl AarpStackHandle {
     pub fn spawn(hw: Mac) -> (Self, mpsc::Receiver<AppletalkPacket>) {
         let (stack, appletalk_rx) = AarpStack::new(hw);
         let (buffer_tx, buffer_rx) = mpsc::channel(1);
-        let handle = task::spawn(stack.spawn(buffer_rx));
-        (Self { handle, buffer_tx }, appletalk_rx)
+        let (control_tx, control_rx) = mpsc::channel(1);
+        let handle = task::spawn(stack.spawn(buffer_rx, control_rx));
+        (
+            Self {
+                buffer_tx,
+                control_tx,
+            },
+            appletalk_rx,
+        )
     }
 
     pub async fn process_ethernet(&self, data: &[u8]) -> Result<()> {
@@ -370,5 +413,14 @@ impl AarpStackHandle {
             .send(data.to_owned())
             .await
             .map_err(|_| crate::CrabbletalkError::Hangup)
+    }
+
+    pub async fn open_ddp(&self, bind: AppletalkSocket) -> Result<DdpSocket> {
+        let (tx, rx) = oneshot::channel();
+        self.control_tx
+            .send(DdpControl { bind, reply: tx })
+            .await
+            .map_err(|_| crate::CrabbletalkError::Hangup)?;
+        Ok(rx.await.map_err(|_| crate::CrabbletalkError::Hangup)?)
     }
 }

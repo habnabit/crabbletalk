@@ -40,39 +40,40 @@ async fn main() -> Result<()> {
             _ = tokio::signal::ctrl_c() => { break }
             r = listener.recv_from(&mut buf) => { r }
         }?;
-        if n_read < 1 {
-            continue;
-        }
         let data = &buf[..n_read];
         println!("read {} bytes from {:?}", n_read, addr);
         if let Some(writer) = &mut pcap_writer {
-            let now = chrono::offset::Utc::now();
-            writer.write(
-                now.timestamp() as u32,
-                now.timestamp_subsec_nanos(),
-                data,
-                n_read as u32,
-            )?;
+            if !data.is_empty() {
+                let now = chrono::offset::Utc::now();
+                writer.write(
+                    now.timestamp() as u32,
+                    now.timestamp_subsec_nanos(),
+                    data,
+                    n_read as u32,
+                )?;
+            }
         }
         if let Some(path) = addr.as_pathname() {
             if !clients.contains(path) {
                 clients.insert(path.to_owned());
             }
-            let mut to_remove = BTreeSet::new();
-            for client in &clients {
-                if client == path {
-                    continue;
-                }
-                match listener.send_to(data, client).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        println!("error {:?} on {:?}", e, client);
-                        to_remove.insert(client.to_owned());
+            if !data.is_empty() {
+                let mut to_remove = BTreeSet::new();
+                for client in &clients {
+                    if client == path {
+                        continue;
+                    }
+                    match listener.send_to(data, client).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            println!("error {:?} on {:?}", e, client);
+                            to_remove.insert(client.to_owned());
+                        }
                     }
                 }
-            }
-            if !to_remove.is_empty() {
-                clients.retain(|c| !to_remove.contains(c));
+                if !to_remove.is_empty() {
+                    clients.retain(|c| !to_remove.contains(c));
+                }
             }
         }
     }

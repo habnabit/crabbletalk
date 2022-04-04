@@ -8,7 +8,7 @@ async fn main() -> Result<()> {
     console_subscriber::init();
     let args: Vec<_> = std::env::args().collect();
     let router_path: PathBuf = args[1].parse()?;
-    let (sock, _unlinker) = crabbletalk_afpd::anonymous_datagram_client("crabbletalk_afpd")?;
+    let (sock, _unlinker) = crabbletalk_afpd::anonymous_datagram_client("crabbletalk_afpd", None)?;
     let sock = tokio::net::UnixDatagram::from_std(sock)?;
     sock.connect(&router_path)?;
     sock.send(b"").await?;

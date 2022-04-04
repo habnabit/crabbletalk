@@ -1,3 +1,4 @@
+use clap::Parser;
 use pnet::util::MacAddr;
 use std::os::unix::prelude::IntoRawFd;
 use std::{ffi::CString, path::PathBuf};
@@ -10,35 +11,36 @@ fn new_mac() -> Result<MacAddr> {
     Ok(MacAddr::new(0x52, 0x54, 0, nic[0], nic[1], nic[2]))
 }
 
-fn main() -> Result<()> {
-    let args: Vec<_> = std::env::args().collect();
-    let server_path: PathBuf = args[1].parse()?;
+#[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
+struct Cli {
+    #[clap(short, long)]
+    tmpdir: Option<PathBuf>,
+    router_path: PathBuf,
+    #[clap(raw = true)]
+    remainder: Vec<String>,
+}
 
-    let (sock, _unlinker) = crabbletalk_afpd::anonymous_datagram_client("crabbletalk_qemu_client")?;
-    sock.connect(&server_path)
-        .with_context(|| format!("whilst connecting to {:?}", server_path))?;
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    let (sock, _unlinker) = crabbletalk_afpd::anonymous_datagram_client(
+        "crabbletalk_qemu_client",
+        cli.tmpdir.as_ref().map(|x| x.as_ref()),
+    )?;
+    sock.connect(&cli.router_path)
+        .with_context(|| format!("whilst connecting to {:?}", cli.router_path))?;
     let sock_fd = sock.into_raw_fd();
     {
         use nix::fcntl::*;
         // clear FD_CLOEXEC
         fcntl(sock_fd, FcntlArg::F_SETFD(FdFlag::empty()))?;
     }
-    let mut base_argv = vec![
-        "qemu-system-ppc",
-        "-M",
-        "mac99",
-        "-m",
-        "512M",
-        "-device",
-        "usb-kbd",
-        "-device",
-        "usb-mouse",
-        "-nic",
-    ];
+    let mut base_argv = vec!["qemu-system-ppc", "-nic"];
     let mac = new_mac()?;
     let nic_arg = format!("tap,model=sungem,fd={},mac={}", sock_fd, mac);
     base_argv.push(&nic_arg);
-    for arg in &args[2..] {
+    for arg in &cli.remainder {
         base_argv.push(arg);
     }
     let argv: Vec<CString> = base_argv

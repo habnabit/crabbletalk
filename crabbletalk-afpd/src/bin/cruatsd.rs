@@ -2,6 +2,10 @@ use std::{collections::BTreeSet, fs::File, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use crabbletalk::{
+    aarp::AarpStackHandle,
+    addr::{Appletalk, AppletalkNode, AppletalkSocket},
+};
 use cruats::zerocopy::{FromBytes, LayoutVerified, Unalign};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -11,6 +15,8 @@ use tokio::{
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
 struct Cli {
+    #[clap(short, long)]
+    tmpdir: Option<PathBuf>,
     router_path: PathBuf,
     cruats_path: PathBuf,
 }
@@ -18,7 +24,10 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let (ethertalk, _unlinker1) = crabbletalk_afpd::anonymous_datagram_client("cruatsd")?;
+    let (ethertalk, _unlinker1) = crabbletalk_afpd::anonymous_datagram_client(
+        "cruatsd",
+        cli.tmpdir.as_ref().map(|x| x.as_ref()),
+    )?;
     let ethertalk = tokio::net::UnixDatagram::from_std(ethertalk)?;
     ethertalk.connect(&cli.router_path)?;
     ethertalk.send(b"").await?;
@@ -45,7 +54,7 @@ async fn main() -> Result<()> {
             }
             accepted = cruats_control.accept() => {
                 let (stream, addr) = accepted?;
-                joinset.spawn(drive_stream(stream, addr));
+                joinset.spawn(drive_stream(aarp_stack.clone(), stream, addr));
             }
             atalk = atalk_rx.recv() => {
                 match &atalk {
@@ -70,7 +79,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn drive_stream(mut stream: UnixStream, addr: SocketAddr) -> Result<()> {
+async fn drive_stream(
+    aarp_stack: AarpStackHandle,
+    mut stream: UnixStream,
+    addr: SocketAddr,
+) -> Result<()> {
     use cruats::at::sockaddr_at;
     use sendfd::SendWithFd;
     use std::mem::size_of;
@@ -81,6 +94,7 @@ async fn drive_stream(mut stream: UnixStream, addr: SocketAddr) -> Result<()> {
     let n_read = stream
         .read_exact(&mut buffer[..size_of::<sockaddr_at>()])
         .await?;
+    let sock = aarp_stack.open_ddp(AppletalkSocket::Dynamic(245)).await?;
     let (mine, theirs) = UnixDatagram::pair()?;
     let theirs = theirs.into_std()?.into_raw_fd();
     println!("here's {} bytes: {:?}", n_read, &buffer[..n_read]);
@@ -92,18 +106,27 @@ async fn drive_stream(mut stream: UnixStream, addr: SocketAddr) -> Result<()> {
 
     loop {
         let n_read = mine.recv(&mut buffer[..]).await?;
-        let (addr_in, payload) = LayoutVerified::<_, Unalign<sockaddr_at>>::new_unaligned_from_prefix(
-            &buffer[..n_read],
-        )
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "couldn't unpack the sockaddr_at? {}: {:?}",
-                n_read,
-                &buffer[..n_read]
-            )
-        })?;
+        let (addr_in, payload) =
+            LayoutVerified::<_, Unalign<sockaddr_at>>::new_unaligned_from_prefix(&buffer[..n_read])
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "couldn't unpack the sockaddr_at? {}: {:?}",
+                        n_read,
+                        &buffer[..n_read]
+                    )
+                })?;
         let addr_in = addr_in.into_ref().get();
         println!("from {:?} {:?}: {:?}", cred, addr_in, payload);
+        let dest = Appletalk {
+            net: addr_in.sat_addr.s_net,
+            node: AppletalkNode::Node(addr_in.sat_addr.s_node as u8),
+        };
+        sock.sendto(
+            &payload[..],
+            dest,
+            AppletalkSocket::Static(addr_in.sat_port as u8),
+        )
+        .await?;
     }
     Ok(())
 }
