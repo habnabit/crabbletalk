@@ -1,14 +1,19 @@
-use std::error::Error;
-use std::fmt;
+use std::{error::Error, fmt};
 
-use crate::ddp::{Ddp, DdpSocket};
-use crate::link::{AppletalkPacket, Elap};
-use crate::{addr::*, Result, UnpackSplit};
 use packed_struct::prelude::*;
 use pnet_packet::ethernet::EtherTypes;
-use tokio::sync::{mpsc, oneshot, watch, OnceCell};
-use tokio::task;
+use tokio::{
+    sync::{mpsc, oneshot, watch, OnceCell},
+    task,
+};
 use tokio_stream::StreamExt;
+
+use crate::{
+    addr::*,
+    ddp::{Ddp, DdpSocket},
+    link::{AppletalkPacket, Elap},
+    Result, UnpackSplit,
+};
 
 #[derive(PrimitiveEnum_u16, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AarpHardware {

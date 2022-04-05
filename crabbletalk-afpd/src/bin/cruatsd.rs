@@ -89,10 +89,10 @@ async fn drive_stream(
     mut stream: UnixStream,
     addr: SocketAddr,
 ) -> Result<()> {
+    use std::{mem::size_of, os::unix::io::IntoRawFd};
+
     use cruats::at::sockaddr_at;
     use sendfd::SendWithFd;
-    use std::mem::size_of;
-    use std::os::unix::io::IntoRawFd;
     let cred = stream.peer_cred();
     println!("well who do we got here {:?} {:?}", addr, cred);
     let mut buffer = [0u8; 1600];
@@ -145,19 +145,16 @@ async fn drive_stream(
                 })?;
         let addr_in = addr_in.into_ref().get();
         println!("from {:?} {:?}: {:?}", cred, addr_in, payload);
-        sock.sendto(
-            &payload[..],
-            DdpHeader {
-                addr: Appletalk {
-                    net: addr_in.sat_addr.s_net,
-                    node: AppletalkNode::Node(addr_in.sat_addr.s_node as u8),
-                },
-                socket: ddp_socket,
-                typ: DdpType {
-                    typ: addr_in.sat_type as u8,
-                },
+        sock.sendto(&payload[..], DdpHeader {
+            addr: Appletalk {
+                net: addr_in.sat_addr.s_net,
+                node: AppletalkNode::Node(addr_in.sat_addr.s_node as u8),
             },
-        )
+            socket: ddp_socket,
+            typ: DdpType {
+                typ: addr_in.sat_type as u8,
+            },
+        })
         .await?;
     }
     Ok(())

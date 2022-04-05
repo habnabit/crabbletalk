@@ -1,6 +1,7 @@
-use crate::{addr::*, Result};
 use packed_struct::prelude::*;
 use tokio::sync::mpsc;
+
+use crate::{addr::*, Result};
 
 #[derive(PackedStruct, Debug, Clone)]
 #[packed_struct(endian = "msb", bit_numbering = "msb0")]

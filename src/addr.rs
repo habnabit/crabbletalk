@@ -1,5 +1,6 @@
-use packed_struct::prelude::*;
 use std::{fmt, ops::RangeInclusive};
+
+use packed_struct::prelude::*;
 
 const fn unpack_u24(n: u32) -> [u8; 3] {
     [
@@ -42,8 +43,7 @@ impl fmt::Debug for Mac {
 
 impl Mac {
     pub fn new_random() -> Self {
-        use rand::rngs::OsRng;
-        use rand::Rng;
+        use rand::{rngs::OsRng, Rng};
         let mut nic = [0u8; 3];
         OsRng.fill(&mut nic[..]);
         Mac { oui: LAA_OUI, nic }
@@ -67,8 +67,7 @@ pub enum AppletalkNode {
 
 impl AppletalkNode {
     fn from_prim(val: AppletalkNodeCatchall) -> Self {
-        use self::AppletalkNodePrim::*;
-        use self::EnumCatchAll::*;
+        use self::{AppletalkNodePrim::*, EnumCatchAll::*};
         match val {
             Enum(Unknown) => AppletalkNode::Unknown,
             Enum(Broadcast) => AppletalkNode::Broadcast,
@@ -77,8 +76,7 @@ impl AppletalkNode {
     }
 
     fn to_prim(self) -> AppletalkNodeCatchall {
-        use self::AppletalkNode::*;
-        use self::EnumCatchAll::*;
+        use self::{AppletalkNode::*, EnumCatchAll::*};
         match self {
             Unknown => Enum(AppletalkNodePrim::Unknown),
             Broadcast => Enum(AppletalkNodePrim::Broadcast),
@@ -127,8 +125,7 @@ pub struct Appletalk {
 impl Appletalk {
     pub fn new_random() -> Self {
         //return Appletalk { net: 0xff00, node: AppletalkNode::Node(0x80) };
-        use rand::rngs::OsRng;
-        use rand::Rng;
+        use rand::{rngs::OsRng, Rng};
         let net = OsRng.gen_range(APPLETALK_STARTUP_NET_RANGE);
         let node = AppletalkNode::Node(OsRng.gen_range(APPLETALK_ANY_NODE_RANGE));
         Appletalk { net, node }
@@ -176,15 +173,13 @@ pub enum AppletalkSocket {
 
 impl AppletalkSocket {
     pub fn new_random_dynamic() -> Self {
-        use rand::rngs::OsRng;
-        use rand::Rng;
+        use rand::{rngs::OsRng, Rng};
         let n = OsRng.gen_range(APPLETALK_DDP_DAS_RANGE);
         AppletalkSocket::Dynamic(n)
     }
 
     fn from_prim(val: AppletalkSocketCatchall) -> Self {
-        use self::AppletalkSocketPrim::*;
-        use self::EnumCatchAll::*;
+        use self::{AppletalkSocketPrim::*, EnumCatchAll::*};
         match val {
             Enum(Reserved0) => AppletalkSocket::Reserved0,
             Enum(Reserved255) => AppletalkSocket::Reserved255,
@@ -196,8 +191,7 @@ impl AppletalkSocket {
     }
 
     fn to_prim(self) -> AppletalkSocketCatchall {
-        use self::AppletalkSocket::*;
-        use self::EnumCatchAll::*;
+        use self::{AppletalkSocket::*, EnumCatchAll::*};
         match self {
             Reserved0 => Enum(AppletalkSocketPrim::Reserved0),
             Reserved255 => Enum(AppletalkSocketPrim::Reserved255),

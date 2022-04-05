@@ -1,9 +1,8 @@
-use clap::Parser;
-use pnet::util::MacAddr;
-use std::os::unix::prelude::IntoRawFd;
-use std::{ffi::CString, path::PathBuf};
+use std::{ffi::CString, os::unix::prelude::IntoRawFd, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
+use clap::Parser;
+use pnet::util::MacAddr;
 
 fn new_mac() -> Result<MacAddr> {
     let mut nic = [0u8; 3];

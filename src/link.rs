@@ -1,7 +1,8 @@
+use std::fmt;
+
 use packed_struct::prelude::*;
 
 use crate::addr::*;
-use std::fmt;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
