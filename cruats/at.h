@@ -4,7 +4,7 @@ struct at_addr {
 };
 
 struct sockaddr_at {
-    short sat_len, sat_family, sat_port;
+    short sat_len, sat_family, sat_port, sat_type;
     struct at_addr sat_addr;
     char sat_zero[8];
 };

@@ -22,7 +22,8 @@ pub struct Ddp {
     pub dest_socket: AppletalkSocket,
     #[packed_field(element_size_bytes = "1", ty = "enum")]
     pub src_socket: AppletalkSocket,
-    pub typ: u8,
+    #[packed_field(element_size_bytes = "1")]
+    pub typ: DdpType,
 }
 
 impl Ddp {
@@ -51,32 +52,43 @@ impl Ddp {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DdpHeader {
+    pub addr: Appletalk,
+    pub socket: AppletalkSocket,
+    pub typ: DdpType,
+}
+
 #[derive(Debug)]
 pub struct DdpSocket {
-    pub(crate) mine: AppletalkSocket,
+    pub(crate) addr: Appletalk,
+    pub(crate) socket: AppletalkSocket,
     pub(crate) ddp_tx: mpsc::Sender<(Ddp, Vec<u8>)>,
     pub(crate) ddp_rx: mpsc::Receiver<(Ddp, Vec<u8>)>,
 }
 
 impl DdpSocket {
-    pub async fn sendto(
-        &self,
-        buf: &[u8],
-        dest: Appletalk,
-        dest_socket: AppletalkSocket,
-    ) -> Result<()> {
+    pub fn local_addr(&self) -> Appletalk {
+        self.addr
+    }
+
+    pub fn local_socket(&self) -> AppletalkSocket {
+        self.socket
+    }
+
+    pub async fn sendto(&self, buf: &[u8], dest: DdpHeader) -> Result<()> {
         let header = Ddp {
             _reserved: Default::default(),
             hop_count: 0,
             length: 0,
             checksum: 0,
-            dest_net: dest.net,
+            dest_net: dest.addr.net,
             src_net: 0,
-            dest_node: dest.node,
+            dest_node: dest.addr.node,
             src_node: AppletalkNode::Unknown,
-            dest_socket,
-            src_socket: self.mine,
-            typ: 4,
+            dest_socket: dest.socket,
+            src_socket: self.socket,
+            typ: dest.typ,
         };
         self.ddp_tx
             .send((header, buf.to_owned()))
@@ -85,10 +97,19 @@ impl DdpSocket {
         Ok(())
     }
 
-    pub async fn recvfrom(&mut self, buf_out: &mut [u8]) -> Result<(usize, Appletalk, AppletalkSocket)> {
-        let (ddp, buf_in) = self.ddp_rx.recv().await.ok_or(crate::CrabbletalkError::Hangup)?;
+    pub async fn recvfrom(&mut self, buf_out: &mut [u8]) -> Result<(usize, DdpHeader)> {
+        let (ddp, buf_in) = self
+            .ddp_rx
+            .recv()
+            .await
+            .ok_or(crate::CrabbletalkError::Hangup)?;
         let len = buf_in.len().min(buf_out.len());
         (&mut buf_out[..len]).copy_from_slice(&buf_in[..len]);
-        Ok((len, ddp.source(), ddp.src_socket))
+        let header = DdpHeader {
+            addr: ddp.source(),
+            socket: ddp.src_socket,
+            typ: ddp.typ,
+        };
+        Ok((len, header))
     }
 }

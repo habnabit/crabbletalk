@@ -1,5 +1,5 @@
 use std::{
-    io::Write,
+    io::{Read, Write},
     os::unix::{
         net::{UnixDatagram, UnixStream},
         prelude::FromRawFd,
@@ -7,11 +7,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-pub use cruats::at::{sockaddr_at, at_addr};
+pub use cruats::at::{at_addr, sockaddr_at};
+use cruats::zerocopy::{AsBytes, FromBytes, LayoutVerified};
 use libc::{c_int, c_void, size_t, ssize_t};
 use nix::sys::{socket::MsgFlags, uio::IoVec};
 use sendfd::RecvWithFd;
-use cruats::zerocopy::{AsBytes, FromBytes};
 
 const ADDRLEN: usize = std::mem::size_of::<sockaddr_at>();
 
@@ -28,8 +28,8 @@ fn open_cruats(bind: Option<sockaddr_at>) -> Result<(c_int, sockaddr_at)> {
         .write_all(&buffer[..])
         .context("whilst issuing cruats control request")?;
     let mut fds = [-1; 2];
-    let (n_read, n_fds) = cruats_control.recv_with_fd(&mut buffer, &mut fds)?;
-    if n_read != ADDRLEN || n_fds != 1 {
+    let (n_read, n_fds) = cruats_control.recv_with_fd(&mut buffer[..], &mut fds)?;
+    if n_fds != 1 {
         return Err(anyhow::anyhow!(
             "cruats didn't send back the right reply: {:?}/{} {:?}",
             n_read,
@@ -64,7 +64,10 @@ pub extern "C" fn cruats_ddp_open(addr: *mut sockaddr_at, bridge: *mut sockaddr_
             errno!(libc::EACCES);
         }
     };
-    println!("*** ok rust open addr out: {:?} ***", addr_out);
+    if let Some(dest) = unsafe { addr.as_mut() } {
+        println!("*** ok rust open addr out: {:?} ***", addr_out);
+        *dest = addr_out;
+    }
     fd
 }
 
@@ -85,27 +88,41 @@ pub extern "C" fn cruats_ddp_sendto(
     addr: *const sockaddr_at,
     addrlen: size_t,
 ) -> ssize_t {
-    let data = if buf.is_null() {
+    let data = if buf.is_null() || len < 1 {
+        println!("*** bail from rust: data {:p} {} ***", buf, len);
         errno!(libc::EINVAL);
     } else {
         unsafe { std::slice::from_raw_parts(buf as *const u8, len) }
     };
     let addr = if addr.is_null() || addrlen != ADDRLEN {
+        println!("*** bail from rust: addr {:p} {} ***", addr, addrlen);
         errno!(libc::EINVAL);
     } else {
         unsafe { std::slice::from_raw_parts(addr as *const u8, addrlen as usize) }
     };
-    println!(
-        "*** hello from rust sendto: {} {} {}: {:?} \n {} vs {}: {:?} ***",
-        socket,
-        len,
-        flags,
-        data,
-        addrlen,
-        std::mem::size_of::<sockaddr_at>(),
-        addr,
-    );
-    let iov = [IoVec::from_slice(addr), IoVec::from_slice(data)];
+    let mut addr_local = [0u8; ADDRLEN];
+    addr_local.copy_from_slice(addr);
+    {
+        let lv = LayoutVerified::<_, sockaddr_at>::new(&mut addr_local[..])
+            .expect("rust internal error?")
+            .into_mut();
+        lv.sat_type = data[0] as i16;
+        println!(
+            "*** hello from rust sendto: {} {} {}: {:?} \n {} vs {}: {:?}\n {:#?} ***",
+            socket,
+            len,
+            flags,
+            data,
+            addrlen,
+            std::mem::size_of::<sockaddr_at>(),
+            addr,
+            lv,
+        );
+    }
+    let iov = [
+        IoVec::from_slice(&addr_local[..]),
+        IoVec::from_slice(&data[1..]),
+    ];
     match nix::sys::socket::sendmsg(socket, &iov, &[], NO_FLAGS, None) {
         Ok(n) => {
             println!("*** sendmsg back {:?} ***", n);

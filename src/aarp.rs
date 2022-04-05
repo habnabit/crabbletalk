@@ -226,18 +226,14 @@ impl AarpStack {
             .map_err(|_| crate::CrabbletalkError::Hangup)
     }
 
-    async fn write_ddp(&self, mut header: (Elap, Ddp), mut payload: &[u8], take_payload_type: bool) -> Result<()> {
+    async fn write_ddp(&self, mut header: (Elap, Ddp), payload: &[u8]) -> Result<()> {
         let addr = match &self.phase {
             AddressPhase::Accepted { addr, .. } => addr,
             _ => {
                 println!("erk");
-                return Ok(())
-            },
+                return Ok(());
+            }
         };
-        if take_payload_type {
-            header.1.typ = payload[0];
-            payload = &payload[1..];
-        }
         header.0.length = (<(Elap, Ddp) as PackedStructSlice>::packed_bytes_size(Some(&header))?
             - 14
             + payload.len()) as u16;
@@ -253,39 +249,56 @@ impl AarpStack {
             .map_err(|_| crate::CrabbletalkError::Hangup)
     }
 
-    async fn maybe_probe_phase(&self) -> Result<()> {
-        let addr = match &self.phase {
-            &AddressPhase::Tentative { addr, .. } => addr,
-            _ => return Ok(()),
-        };
-        self.write_aarp((
-            Elap {
-                destination: APPLETALK_BROADCAST_MAC,
-                source: self.my_addr_ethernet,
-                length: 0,
-                dsap: SNAP,
-                ig: false,
-                ssap: SNAP,
-                cr: false,
-                control: 3,
-                oui: ZERO_OUI,
-                ethertype: EtherTypes::Aarp.into(),
-            },
-            Aarp {
-                hardware: AarpHardware::Ethernet,
-                protocol: EtherTypes::AppleTalk.into(),
-                hw_address_len: 6,
-                protocol_address_len: 4,
-                function: AarpFunction::Probe,
-                source_hw: self.my_addr_ethernet,
-                _pad1: Default::default(),
-                source_appletalk: addr,
-                destination_hw: ZERO_MAC,
-                _pad2: Default::default(),
-                destination_appletalk: addr,
-            },
-        ))
-        .await
+    async fn maybe_probe_phase(&self, just_set: bool) -> Result<()> {
+        match &self.phase {
+            AddressPhase::Accepted { addr } if just_set => {
+                self.my_addr_appletalk_tx.send_replace(Some(*addr));
+            }
+            AddressPhase::Tentative { addr, .. } => {
+                let addr = *addr;
+                self.write_aarp((
+                    Elap {
+                        destination: APPLETALK_BROADCAST_MAC,
+                        source: self.my_addr_ethernet,
+                        length: 0,
+                        dsap: SNAP,
+                        ig: false,
+                        ssap: SNAP,
+                        cr: false,
+                        control: 3,
+                        oui: ZERO_OUI,
+                        ethertype: EtherTypes::Aarp.into(),
+                    },
+                    Aarp {
+                        hardware: AarpHardware::Ethernet,
+                        protocol: EtherTypes::AppleTalk.into(),
+                        hw_address_len: 6,
+                        protocol_address_len: 4,
+                        function: AarpFunction::Probe,
+                        source_hw: self.my_addr_ethernet,
+                        _pad1: Default::default(),
+                        source_appletalk: addr,
+                        destination_hw: ZERO_MAC,
+                        _pad2: Default::default(),
+                        destination_appletalk: addr,
+                    },
+                ))
+                .await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub async fn next_address(&self) -> Result<Appletalk> {
+        let mut rx = tokio_stream::wrappers::WatchStream::new(self.my_addr_appletalk_rx.clone());
+        loop {
+            match rx.next().await {
+                Some(Some(x)) => return Ok(x),
+                Some(None) => continue,
+                None => return Err(crate::CrabbletalkError::Hangup),
+            }
+        }
     }
 
     pub async fn spawn(
@@ -297,6 +310,7 @@ impl AarpStack {
         let mut phase_fut = AddressPhase::acquire(phase_tx.clone());
         tokio::pin!(phase_fut);
         let mut drive_phase_fut = true;
+        let mut join_set = tokio::task::JoinSet::new();
         let mut ddp_merge = tokio_stream::StreamMap::new();
         loop {
             tokio::select! {
@@ -312,7 +326,7 @@ impl AarpStack {
                             return;
                         },
                     };
-                    let res = self.maybe_probe_phase().await;
+                    let res = self.maybe_probe_phase(true).await;
                     println!("stepped phase: {:#?} {:?}", self, res);
                 }
                 next = buffer_rx.recv() => {
@@ -337,8 +351,25 @@ impl AarpStack {
                     let (ddp_tx_in, ddp_rx_in) = mpsc::channel::<(Ddp, Vec<u8>)>(1);
                     let (ddp_tx_out, ddp_rx_out) = mpsc::channel::<(Ddp, Vec<u8>)>(1);
                     ddp_merge.insert(ctrl.bind, tokio_stream::wrappers::ReceiverStream::new(ddp_rx_in));
-                    let ret = crate::ddp::DdpSocket { mine: ctrl.bind, ddp_tx: ddp_tx_in, ddp_rx: ddp_rx_out };
-                    let _ = ctrl.reply.send(ret);
+                    let mut addr_stream = tokio_stream::wrappers::WatchStream::new(self.my_addr_appletalk_rx.clone());
+                    //let addr_fut = self.next_address();
+                    join_set.spawn(async move {
+                        let addr = loop {
+                            println!("spin, spin,");
+                            match addr_stream.next().await {
+                                Some(Some(x)) => break x,
+                                Some(None) => continue,
+                                None => return Err(crate::CrabbletalkError::Hangup),
+                            }
+                        };
+                        let ret = crate::ddp::DdpSocket { addr, socket: ctrl.bind, ddp_tx: ddp_tx_in, ddp_rx: ddp_rx_out };
+                        println!("aight so we got {:#?}", ret);
+                        let _ = ctrl.reply.send(ret);
+                        Result::<_>::Ok(())
+                    });
+                }
+                next = join_set.join_one(), if !join_set.is_empty() => {
+                    println!("whoa stream step: {:?}", next);
                 }
                 next = ddp_merge.next(), if !ddp_merge.is_empty() => {
                     let (socket, (ddp, payload)) = match next {
@@ -365,12 +396,11 @@ impl AarpStack {
                             ddp,
                         ),
                         &payload[..],
-                        true,
                     )
                     .await;
                 }
                 () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                    match self.maybe_probe_phase().await {
+                    match self.maybe_probe_phase(false).await {
                         Ok(()) => {}
                         Err(e) => {
                             println!("sent another probe? {:?}", e);

@@ -35,6 +35,6 @@ winreg = "0.10.1"
 [target."cfg(unix)".dependencies]
 nix = "0.23.1"
 
-# [build-dependencies]
-# anyhow = "1.0.55"
-# bindgen = "0.59.2"
+[build-dependencies]
+anyhow = "1.0.55"
+bindgen = "0.59.2"

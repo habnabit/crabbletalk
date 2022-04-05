@@ -147,6 +147,8 @@ impl fmt::Debug for Appletalk {
     }
 }
 
+pub const APPLETALK_DDP_DAS_RANGE: RangeInclusive<u8> = 0x80..=0xFD;
+
 #[derive(PrimitiveEnum_u8, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AppletalkSocketPrim {
     Reserved0 = 0,
@@ -173,6 +175,13 @@ pub enum AppletalkSocket {
 }
 
 impl AppletalkSocket {
+    pub fn new_random_dynamic() -> Self {
+        use rand::rngs::OsRng;
+        use rand::Rng;
+        let n = OsRng.gen_range(APPLETALK_DDP_DAS_RANGE);
+        AppletalkSocket::Dynamic(n)
+    }
+
     fn from_prim(val: AppletalkSocketCatchall) -> Self {
         use self::AppletalkSocketPrim::*;
         use self::EnumCatchAll::*;
@@ -216,6 +225,17 @@ impl PrimitiveEnum for AppletalkSocket {
 
     fn from_str_lower(s: &str) -> Option<Self> {
         AppletalkSocketCatchall::from_str_lower(s).map(Self::from_prim)
+    }
+}
+
+#[derive(PackedStruct, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DdpType {
+    pub typ: u8,
+}
+
+impl fmt::Debug for DdpType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "DdpType<${:02x}>", self.typ)
     }
 }
 

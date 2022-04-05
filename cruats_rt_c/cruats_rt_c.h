@@ -14,6 +14,7 @@ typedef struct cruats_sockaddr_at {
   short sat_len;
   short sat_family;
   short sat_port;
+  short sat_type;
   struct cruats_at_addr sat_addr;
   char sat_zero[8];
 } cruats_sockaddr_at;

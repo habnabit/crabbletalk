@@ -4,9 +4,14 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use crabbletalk::{
     aarp::AarpStackHandle,
-    addr::{Appletalk, AppletalkNode, AppletalkSocket},
+    addr::{Appletalk, AppletalkNode, AppletalkSocket, DdpType},
+    ddp::DdpHeader,
 };
-use cruats::zerocopy::{FromBytes, LayoutVerified, Unalign};
+use cruats::{
+    at::at_addr,
+    zerocopy::{FromBytes, LayoutVerified, Unalign, Unaligned},
+};
+use packed_struct::PrimitiveEnum;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{unix::SocketAddr, UnixDatagram, UnixStream},
@@ -91,16 +96,39 @@ async fn drive_stream(
     let cred = stream.peer_cred();
     println!("well who do we got here {:?} {:?}", addr, cred);
     let mut buffer = [0u8; 1600];
-    let n_read = stream
-        .read_exact(&mut buffer[..size_of::<sockaddr_at>()])
-        .await?;
-    let sock = aarp_stack.open_ddp(AppletalkSocket::Dynamic(245)).await?;
-    let (mine, theirs) = UnixDatagram::pair()?;
-    let theirs = theirs.into_std()?.into_raw_fd();
-    println!("here's {} bytes: {:?}", n_read, &buffer[..n_read]);
-    stream.writable().await?;
-    let res = stream.send_with_fd(&buffer, &[theirs]);
-    println!("1: {:?}", res);
+    let ddp_socket;
+    let sock;
+    let mine;
+    let my_addr;
+    {
+        let addr_buf = &mut buffer[..size_of::<sockaddr_at>()];
+        let n_read = stream.read_exact(addr_buf).await?;
+        ddp_socket = AppletalkSocket::new_random_dynamic();
+        sock = aarp_stack.open_ddp(ddp_socket).await?;
+        let (mine_, theirs) = UnixDatagram::pair()?;
+        mine = mine_;
+        let theirs = theirs.into_std()?.into_raw_fd();
+        println!("here's {} bytes: {:?}", n_read, addr_buf);
+        {
+            let lv = LayoutVerified::<_, Unalign<sockaddr_at>>::new(&mut addr_buf[..])
+                .expect("rust internal error?")
+                .into_mut();
+            my_addr = lv.into_inner();
+            let addr = sock.local_addr();
+            *lv = Unalign::new(sockaddr_at {
+                sat_addr: at_addr {
+                    s_net: addr.net,
+                    s_node: addr.node.to_primitive() as u16,
+                },
+                sat_port: sock.local_socket().to_primitive() as i16,
+                ..Default::default()
+            });
+            println!("in: {:#?} out: {:#?}", my_addr, lv.into_inner());
+        }
+        stream.writable().await?;
+        let res = stream.send_with_fd(addr_buf, &[theirs]);
+        println!("fd/buf: {:?}", res);
+    }
     stream.shutdown().await?;
     drop(stream);
 
@@ -117,14 +145,18 @@ async fn drive_stream(
                 })?;
         let addr_in = addr_in.into_ref().get();
         println!("from {:?} {:?}: {:?}", cred, addr_in, payload);
-        let dest = Appletalk {
-            net: addr_in.sat_addr.s_net,
-            node: AppletalkNode::Node(addr_in.sat_addr.s_node as u8),
-        };
         sock.sendto(
             &payload[..],
-            dest,
-            AppletalkSocket::Static(addr_in.sat_port as u8),
+            DdpHeader {
+                addr: Appletalk {
+                    net: addr_in.sat_addr.s_net,
+                    node: AppletalkNode::Node(addr_in.sat_addr.s_node as u8),
+                },
+                socket: ddp_socket,
+                typ: DdpType {
+                    typ: addr_in.sat_type as u8,
+                },
+            },
         )
         .await?;
     }

@@ -1,8 +1,11 @@
-use std::{collections::BTreeSet, fs::File, path::PathBuf, os::unix::prelude::FromRawFd};
+use std::{collections::BTreeSet, fs::File, os::unix::prelude::FromRawFd, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use tokio::{net::{UnixStream, unix::SocketAddr, UnixDatagram}, io::{AsyncReadExt, AsyncWriteExt}};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{unix::SocketAddr, UnixDatagram, UnixStream},
+};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]

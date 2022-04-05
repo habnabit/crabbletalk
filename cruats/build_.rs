@@ -15,8 +15,8 @@ impl ParseCallbacks for Callbacks {
     fn add_derives(&self, _name: &str) -> Vec<String> {
         vec![
             "Default".to_owned(),
-            "zerocopy::FromBytes".to_owned(),
-            "zerocopy::AsBytes".to_owned(),
+            "FromBytes".to_owned(),
+            "AsBytes".to_owned(),
         ]
     }
 }

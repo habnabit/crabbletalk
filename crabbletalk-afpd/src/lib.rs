@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
+use std::{
+    os::unix::net::UnixDatagram,
+    path::{Path, PathBuf},
+};
 use tempfile::TempDir;
-use std::{os::unix::net::UnixDatagram, path::{PathBuf, Path}};
 
 pub struct UnlinkOnDrop(PathBuf);
 

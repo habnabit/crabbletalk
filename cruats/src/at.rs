@@ -45,6 +45,7 @@ pub struct sockaddr_at {
     pub sat_len: ::std::os::raw::c_short,
     pub sat_family: ::std::os::raw::c_short,
     pub sat_port: ::std::os::raw::c_short,
+    pub sat_type: ::std::os::raw::c_short,
     pub sat_addr: at_addr,
     pub sat_zero: [::std::os::raw::c_char; 8usize],
 }
@@ -52,7 +53,7 @@ pub struct sockaddr_at {
 fn bindgen_test_layout_sockaddr_at() {
     assert_eq!(
         ::std::mem::size_of::<sockaddr_at>(),
-        18usize,
+        20usize,
         concat!("Size of: ", stringify!(sockaddr_at))
     );
     assert_eq!(
@@ -91,8 +92,18 @@ fn bindgen_test_layout_sockaddr_at() {
         )
     );
     assert_eq!(
-        unsafe { &(*(::std::ptr::null::<sockaddr_at>())).sat_addr as *const _ as usize },
+        unsafe { &(*(::std::ptr::null::<sockaddr_at>())).sat_type as *const _ as usize },
         6usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sockaddr_at),
+            "::",
+            stringify!(sat_type)
+        )
+    );
+    assert_eq!(
+        unsafe { &(*(::std::ptr::null::<sockaddr_at>())).sat_addr as *const _ as usize },
+        8usize,
         concat!(
             "Offset of field: ",
             stringify!(sockaddr_at),
@@ -102,7 +113,7 @@ fn bindgen_test_layout_sockaddr_at() {
     );
     assert_eq!(
         unsafe { &(*(::std::ptr::null::<sockaddr_at>())).sat_zero as *const _ as usize },
-        10usize,
+        12usize,
         concat!(
             "Offset of field: ",
             stringify!(sockaddr_at),
