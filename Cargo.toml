@@ -12,6 +12,7 @@ pnet_macros = "0.29.0"
 pnet_macros_support = "0.29.0"
 pnet_packet = "0.29.0"
 retainer = "0.3.0"
+chrono = "0.4.23"
 
 [dependencies.rand]
 version = "0.8.5"
@@ -25,3 +26,7 @@ features = ["time", "sync", "rt"]
 [dependencies.tokio-stream]
 version = "0.1.8"
 features = ["sync"]
+
+[dependencies.async-once-cell]
+version = "0.4.2"
+features = ["unpin"]

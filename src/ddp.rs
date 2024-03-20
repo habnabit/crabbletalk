@@ -3,6 +3,18 @@ use tokio::sync::mpsc;
 
 use crate::{addr::*, Result};
 
+pub fn ddp_checksum(bytes: &[u8]) -> u16 {
+    let mut ret = 0u16;
+    for &b in bytes {
+        ret = ret.wrapping_add(b as u16).rotate_left(1);
+    }
+    if ret == 0 {
+        0xffff
+    } else {
+        ret
+    }
+}
+
 #[derive(PackedStruct, Debug, Clone)]
 #[packed_struct(endian = "msb", bit_numbering = "msb0")]
 pub struct Ddp {
@@ -51,6 +63,10 @@ impl Ddp {
         self.dest_net = addr.net;
         self.dest_node = addr.node;
     }
+
+    pub fn set_checksum_from(&mut self, buf: &[u8]) {
+        self.checksum = ddp_checksum(buf);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -82,7 +98,7 @@ impl DdpSocket {
             _reserved: Default::default(),
             hop_count: 0,
             length: 0,
-            checksum: 0,
+            checksum: ddp_checksum(buf),
             dest_net: dest.addr.net,
             src_net: 0,
             dest_node: dest.addr.node,

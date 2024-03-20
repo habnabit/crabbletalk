@@ -28,6 +28,7 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    console_subscriber::init();
     let cli = Cli::parse();
     let (ethertalk, _unlinker1) = crabbletalk_afpd::anonymous_datagram_client(
         "cruatsd",
@@ -55,7 +56,9 @@ async fn main() -> Result<()> {
             recvd = ethertalk.recv_from(&mut ethertalk_buf) => {
                 let (n_read, addr) = recvd?;
                 let data = &ethertalk_buf[..n_read];
+                println!("ethertalk in in");
                 aarp_stack.process_ethernet(data).await?;
+                println!("ethertalk in out");
             }
             accepted = cruats_control.accept() => {
                 let (stream, addr) = accepted?;
@@ -77,6 +80,7 @@ async fn main() -> Result<()> {
     }
 
     println!("draining joinset of {:?}", joinset.len());
+    joinset.abort_all();
     while !joinset.is_empty() {
         joinset.join_one().await?;
     }
@@ -145,16 +149,19 @@ async fn drive_stream(
                 })?;
         let addr_in = addr_in.into_ref().get();
         println!("from {:?} {:?}: {:?}", cred, addr_in, payload);
-        sock.sendto(&payload[..], DdpHeader {
-            addr: Appletalk {
-                net: addr_in.sat_addr.s_net,
-                node: AppletalkNode::Node(addr_in.sat_addr.s_node as u8),
+        sock.sendto(
+            &payload[..],
+            DdpHeader {
+                addr: Appletalk {
+                    net: addr_in.sat_addr.s_net,
+                    node: AppletalkNode::Node(addr_in.sat_addr.s_node as u8),
+                },
+                socket: ddp_socket,
+                typ: DdpType {
+                    typ: addr_in.sat_type as u8,
+                },
             },
-            socket: ddp_socket,
-            typ: DdpType {
-                typ: addr_in.sat_type as u8,
-            },
-        })
+        )
         .await?;
     }
     Ok(())

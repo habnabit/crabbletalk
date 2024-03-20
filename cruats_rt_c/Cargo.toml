@@ -37,8 +37,9 @@ features = ["full", "tracing"]
 [target."cfg(windows)".dependencies]
 winreg = "0.10.1"
 
-[target."cfg(unix)".dependencies]
-nix = "0.23.1"
+[target."cfg(unix)".dependencies.nix]
+version = "0.26.1"
+features = ["poll", "socket", "uio"]
 
 [build-dependencies]
 cbindgen = "0.21.0"

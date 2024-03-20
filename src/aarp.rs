@@ -1,9 +1,10 @@
-use std::{error::Error, fmt};
+use std::{cell::Cell, collections::BTreeMap, error::Error, fmt, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use packed_struct::prelude::*;
 use pnet_packet::ethernet::EtherTypes;
 use tokio::{
-    sync::{mpsc, oneshot, watch, OnceCell},
+    sync::{mpsc, oneshot, watch, Notify, OnceCell, RwLock},
     task,
 };
 use tokio_stream::StreamExt;
@@ -103,14 +104,38 @@ impl AddressPhase {
     }
 }
 
+#[derive(Default)]
+struct AmtSynchronized {
+    hw_table: BTreeMap<Mac, Arc<AmtEntry>>,
+    atalk_table: BTreeMap<Appletalk, Arc<AmtEntry>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AmtEntryCell {
+    hw: Mac,
+    atalk: Appletalk,
+    set_at: DateTime<Utc>,
+}
+
+struct AmtEntry {
+    entry_tx: watch::Sender<Option<AmtEntryCell>>,
+    entry_rx: watch::Receiver<Option<AmtEntryCell>>,
+}
+
+impl Default for AmtEntry {
+    fn default() -> Self {
+        let (entry_tx, entry_rx) = watch::channel(None);
+        AmtEntry { entry_tx, entry_rx }
+    }
+}
+
 pub struct AarpStack {
     appletalk_tx: mpsc::Sender<AppletalkPacket>,
     my_addr_ethernet: Mac,
     my_addr_appletalk_tx: watch::Sender<Option<Appletalk>>,
     my_addr_appletalk_rx: watch::Receiver<Option<Appletalk>>,
     phase: AddressPhase,
-    amt_hw2atalk: retainer::Cache<Mac, Appletalk>,
-    amt_atalk2hw: retainer::Cache<Appletalk, Mac>,
+    amt: RwLock<AmtSynchronized>,
 }
 
 impl fmt::Debug for AarpStack {
@@ -134,15 +159,14 @@ impl AarpStack {
             my_addr_appletalk_tx,
             my_addr_appletalk_rx,
             phase: AddressPhase::Uninitialized,
-            amt_hw2atalk: <retainer::Cache<_, _> as Default>::default().with_label("amt_hw2atalk"),
-            amt_atalk2hw: <retainer::Cache<_, _> as Default>::default().with_label("amt_atalk2hw"),
+            amt: Default::default(),
         };
         (ret, appletalk_rx)
     }
 
     pub async fn process_aarp(&mut self, data: &[u8]) -> Result<()> {
-        let aarp = Aarp::unpack_from_slice(data)?;
-        println!("  aarp: {:#?}", aarp);
+        let (aarp, remainder) = Aarp::unpack_split(data)?;
+        println!("  aarp: {:#?} trailer {:?}", aarp, remainder);
         use self::AarpFunction::*;
         match (aarp.function, &self.phase) {
             (Probe, AddressPhase::Tentative { addr, conflict })
@@ -162,6 +186,34 @@ impl AarpStack {
             {
                 // TODO: send AARP reply
                 println!("accepted reply");
+                self.write_aarp((
+                    Elap {
+                        destination: aarp.source_hw,
+                        source: self.my_addr_ethernet,
+                        length: 0,
+                        dsap: SNAP,
+                        ig: false,
+                        ssap: SNAP,
+                        cr: false,
+                        control: 3,
+                        oui: ZERO_OUI,
+                        ethertype: EtherTypes::Aarp.into(),
+                    },
+                    Aarp {
+                        hardware: AarpHardware::Ethernet,
+                        protocol: EtherTypes::AppleTalk.into(),
+                        hw_address_len: 6,
+                        protocol_address_len: 4,
+                        function: AarpFunction::Response,
+                        source_hw: self.my_addr_ethernet,
+                        _pad1: Default::default(),
+                        source_appletalk: *addr,
+                        destination_hw: aarp.source_hw,
+                        _pad2: Default::default(),
+                        destination_appletalk: aarp.source_appletalk,
+                    },
+                ))
+                .await?;
             }
             _ => {}
         }
@@ -203,9 +255,92 @@ impl AarpStack {
     }
 
     async fn add_addresses(&self, hw: Mac, atalk: Appletalk) {
-        let expiry = || retainer::CacheExpiration::none();
-        self.amt_hw2atalk.insert(hw, atalk, expiry()).await;
-        self.amt_atalk2hw.insert(atalk, hw, expiry()).await;
+        let mut amt = self.amt.write().await;
+        let entry = amt.atalk_table.entry(atalk).or_default().clone();
+        amt.hw_table.entry(hw).or_insert_with(|| entry.clone());
+        let new = Some(AmtEntryCell {
+            hw,
+            atalk,
+            set_at: Utc::now(),
+        });
+        println!("new value for {:?}/{:?}: {:?}", hw, atalk, new);
+        let old = entry.entry_tx.send_replace(new);
+        println!("old value for {:?}/{:?}: {:?}", hw, atalk, old);
+    }
+
+    async fn hw_from_appletalk(&self, atalk: Appletalk) -> Result<Mac> {
+        let mut rx = {
+            let entry = {
+                let mut amt = self.amt.write().await;
+                println!("hw4a keys {:?}", amt.atalk_table.keys().collect::<Vec<_>>());
+                amt.atalk_table.entry(atalk).or_default().clone()
+            };
+            let potential = entry.entry_rx.borrow();
+            println!("hw4a for {:?} borrowed {:?}", atalk, potential);
+            if let &Some(AmtEntryCell { hw, .. }) = &*potential {
+                return Ok(hw);
+            }
+            entry.entry_rx.clone()
+        };
+        let mut addr_stream =
+            tokio_stream::wrappers::WatchStream::new(self.my_addr_appletalk_rx.clone());
+        let mut drive_aarp = true;
+        let mut aarp_fut = async move {
+            let addr = loop {
+                println!("spin, spin,");
+                match addr_stream.next().await {
+                    Some(Some(x)) => break x,
+                    Some(None) => continue,
+                    None => return Err(crate::CrabbletalkError::Hangup),
+                }
+            };
+            self.write_aarp((
+                Elap {
+                    destination: APPLETALK_BROADCAST_MAC,
+                    source: self.my_addr_ethernet,
+                    length: 0,
+                    dsap: SNAP,
+                    ig: false,
+                    ssap: SNAP,
+                    cr: false,
+                    control: 3,
+                    oui: ZERO_OUI,
+                    ethertype: EtherTypes::Aarp.into(),
+                },
+                Aarp {
+                    hardware: AarpHardware::Ethernet,
+                    protocol: EtherTypes::AppleTalk.into(),
+                    hw_address_len: 6,
+                    protocol_address_len: 4,
+                    function: AarpFunction::Request,
+                    source_hw: self.my_addr_ethernet,
+                    _pad1: Default::default(),
+                    source_appletalk: addr,
+                    destination_hw: ZERO_MAC,
+                    _pad2: Default::default(),
+                    destination_appletalk: atalk,
+                },
+            ))
+            .await?;
+            Ok(())
+        };
+        tokio::pin!(aarp_fut);
+        loop {
+            tokio::select! {
+                res = rx.changed() => {
+                    res.map_err(|_| crate::CrabbletalkError::Hangup)?;
+                    let potential = rx.borrow_and_update();
+                    if let &Some(AmtEntryCell { hw, .. }) = &*potential {
+                        return Ok(hw);
+                    }
+                }
+                res = &mut aarp_fut, if drive_aarp => {
+                    println!("aarp_fut => {:?}", res);
+                    drive_aarp = false;
+                    return Err(crate::CrabbletalkError::Transient);
+                }
+            }
+        }
     }
 
     pub async fn process_ethernet(&mut self, data: &[u8]) -> Result<()> {
@@ -232,6 +367,7 @@ impl AarpStack {
     }
 
     async fn write_ddp(&self, mut header: (Elap, Ddp), payload: &[u8]) -> Result<()> {
+        println!("write_ddp: {:#?}", header);
         let addr = match &self.phase {
             AddressPhase::Accepted { addr, .. } => addr,
             _ => {
@@ -248,10 +384,13 @@ impl AarpStack {
             as u16;
         let mut payload_vec = header.pack_to_vec()?;
         payload_vec.extend_from_slice(payload);
-        self.appletalk_tx
+        println!("out to the wire? {:?}", payload_vec);
+        let res = self.appletalk_tx
             .send(AppletalkPacket(payload_vec))
             .await
-            .map_err(|_| crate::CrabbletalkError::Hangup)
+            .map_err(|_| crate::CrabbletalkError::Hangup);
+        println!("  .. ok?");
+        res
     }
 
     async fn maybe_probe_phase(&self, just_set: bool) -> Result<()> {
@@ -384,12 +523,19 @@ impl AarpStack {
                             return;
                         },
                     };
+                    let destination = match self.hw_from_appletalk(ddp.destination()).await {
+                        Ok(x) => x,
+                        Err(e) => {
+                            println!("hw4a failure {:?}", e);
+                            continue;
+                        }
+                    };
                     let res = self.write_ddp(
                         (
                             Elap {
-                                destination: APPLETALK_BROADCAST_MAC,
+                                destination,
                                 source: self.my_addr_ethernet,
-                                length: 0,
+                                length: 0,  // filled in by write_ddp
                                 dsap: SNAP,
                                 ig: false,
                                 ssap: SNAP,

@@ -1,5 +1,5 @@
 use std::{
-    io::{Read, Write},
+    io::{IoSlice, IoSliceMut, Read, Write},
     os::unix::{
         net::{UnixDatagram, UnixStream},
         prelude::FromRawFd,
@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 pub use cruats::at::{at_addr, sockaddr_at};
 use cruats::zerocopy::{AsBytes, FromBytes, LayoutVerified};
 use libc::{c_int, c_void, size_t, ssize_t};
-use nix::sys::{socket::MsgFlags, uio::IoVec};
+use nix::sys::{select::FdSet, socket::MsgFlags};
 use sendfd::RecvWithFd;
 
 const ADDRLEN: usize = std::mem::size_of::<sockaddr_at>();
@@ -107,6 +107,8 @@ pub extern "C" fn cruats_ddp_sendto(
             .expect("rust internal error?")
             .into_mut();
         lv.sat_type = data[0] as i16;
+        // netatalk's atalk_aton calls hton, so reverse that
+        lv.sat_addr.s_net = u16::from_be(lv.sat_addr.s_net);
         println!(
             "*** hello from rust sendto: {} {} {}: {:?} \n {} vs {}: {:?}\n {:#?} ***",
             socket,
@@ -119,11 +121,8 @@ pub extern "C" fn cruats_ddp_sendto(
             lv,
         );
     }
-    let iov = [
-        IoVec::from_slice(&addr_local[..]),
-        IoVec::from_slice(&data[1..]),
-    ];
-    match nix::sys::socket::sendmsg(socket, &iov, &[], NO_FLAGS, None) {
+    let iov = [IoSlice::new(&addr_local[..]), IoSlice::new(&data[1..])];
+    match nix::sys::socket::sendmsg::<()>(socket, &iov[..], &[], NO_FLAGS, None) {
         Ok(n) => {
             println!("*** sendmsg back {:?} ***", n);
             len as isize
@@ -148,5 +147,39 @@ pub extern "C" fn cruats_ddp_recvfrom(
         "*** hello from rust recvfrom: {} {} {} ***",
         socket, len, flags,
     );
-    loop {}
+    let buf = if buf.is_null() || len < 1 {
+        println!("*** bail from rust: data {:p} {} ***", buf, len);
+        errno!(libc::EINVAL);
+    } else {
+        unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, len) }
+    };
+    let mut iov = [IoSliceMut::new(buf)];
+    let mut readers = FdSet::new();
+    readers.insert(socket);
+    loop {
+        match nix::sys::select::select(readers.highest(), Some(&mut readers), None, None, None) {
+            Err(nix::errno::Errno::EINTR) => {
+                println!("*** haha eintr");
+                continue;
+            }
+            Ok(n) => {
+                println!("*** select back {:?} ***", n);
+                break;
+            }
+            Err(e) => {
+                println!("*** oh no select failure: {:?} ***", e);
+                return -1;
+            }
+        }
+    }
+    match nix::sys::socket::recvmsg::<()>(socket, &mut iov[..], None, NO_FLAGS) {
+        Ok(n) => {
+            println!("*** recvmsg back {:?} ***", n);
+            len as isize
+        }
+        Err(e) => {
+            println!("*** oh no recvmsg failure: {:?} ***", e);
+            -1
+        }
+    }
 }

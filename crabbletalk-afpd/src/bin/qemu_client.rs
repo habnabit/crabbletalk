@@ -15,6 +15,8 @@ fn new_mac() -> Result<MacAddr> {
 struct Cli {
     #[clap(short, long)]
     tmpdir: Option<PathBuf>,
+    #[clap(short = 'q', long, default_value = "qemu-system-ppc")]
+    qemu: String,
     router_path: PathBuf,
     #[clap(raw = true)]
     remainder: Vec<String>,
@@ -35,9 +37,9 @@ fn main() -> Result<()> {
         // clear FD_CLOEXEC
         fcntl(sock_fd, FcntlArg::F_SETFD(FdFlag::empty()))?;
     }
-    let mut base_argv = vec!["qemu-system-ppc", "-nic"];
+    let mut base_argv = vec![cli.qemu.as_str(), "-nic"];
     let mac = new_mac()?;
-    let nic_arg = format!("tap,model=sungem,fd={},mac={}", sock_fd, mac);
+    let nic_arg = format!("tap,fd={},mac={}", sock_fd, mac);
     base_argv.push(&nic_arg);
     for arg in &cli.remainder {
         base_argv.push(arg);

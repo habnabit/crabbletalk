@@ -13,6 +13,8 @@ pub enum CrabbletalkError {
     PackingError(#[from] PackingError),
     #[error("hangup")]
     Hangup,
+    #[error("transient")]
+    Transient,
 }
 
 pub type Result<T> = std::result::Result<T, CrabbletalkError>;
