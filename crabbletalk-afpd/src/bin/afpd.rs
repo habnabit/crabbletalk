@@ -1,3 +1,7 @@
+// © 2022 <_@habnab.it>
+//
+// SPDX-License-Identifier: MPL-2.0
+
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};

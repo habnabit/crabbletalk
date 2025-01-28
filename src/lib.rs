@@ -1,3 +1,7 @@
+// © 2022 <_@habnab.it>
+//
+// SPDX-License-Identifier: MPL-2.0
+
 use packed_struct::{types::bits::ByteArray, PackedStruct, PackedStructSlice, PackingError};
 
 pub mod aarp;

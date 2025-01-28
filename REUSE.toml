@@ -1,0 +1,14 @@
+version = 1
+
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "© 2022 <_@habnab.it>"
+SPDX-License-Identifier = "MPL-2.0"
+
+[[annotations]]
+path = [
+    "cruats/src/at.rs",
+    "Cargo.lock",
+]
+SPDX-FileCopyrightText = "NONE"
+SPDX-License-Identifier = "CC0-1.0"

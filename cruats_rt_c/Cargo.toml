@@ -1,7 +1,12 @@
+# © 2022 <_@habnab.it>
+#
+# SPDX-License-Identifier: MPL-2.0
+
 [package]
 name = "cruats_rt_c"
 version = "0.1.0"
 edition = "2021"
+license = "MPL-2.0"
 
 [lib]
 name = "cruats_rt_c"

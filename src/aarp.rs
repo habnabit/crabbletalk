@@ -1,3 +1,7 @@
+// © 2022 <_@habnab.it>
+//
+// SPDX-License-Identifier: MPL-2.0
+
 use std::{cell::Cell, collections::BTreeMap, error::Error, fmt, sync::Arc};
 
 use chrono::{DateTime, Utc};

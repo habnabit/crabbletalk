@@ -1,3 +1,7 @@
+# © 2022 <_@habnab.it>
+#
+# SPDX-License-Identifier: MPL-2.0
+
 unstable_features = true
 overflow_delimited_expr = true
 imports_granularity = "Crate"

@@ -1,3 +1,9 @@
+/*
+ * © 2022 <_@habnab.it>
+ *
+ * SPDX-License-Identifier: MPL-2.0
+ */
+
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>

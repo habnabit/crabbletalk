@@ -1,3 +1,8 @@
+/*
+ * © 2022 <_@habnab.it>
+ *
+ * SPDX-License-Identifier: MPL-2.0
+ */
 
 struct at_addr {
     unsigned short s_net, s_node;
